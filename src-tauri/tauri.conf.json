@@ -15,7 +15,7 @@
         "label": "main",
         "title": "HeadRoom",
         "width": 360,
-        "height": 520,
+        "height": 320,
         "resizable": false,
         "decorations": false,
         "visible": false,

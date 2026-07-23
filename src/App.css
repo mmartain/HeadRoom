@@ -87,19 +87,33 @@ textarea,
 }
 
 .app-shell {
-  height: 100%;
   background: linear-gradient(165deg, #171b22 0%, #101318 55%, #0c0f13 100%);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
 }
 
+.app-shell--flyout {
+  height: auto;
+}
+
+.app-shell--settings {
+  height: 100%;
+}
+
 .flyout,
 .settings {
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-height: 0;
+}
+
+.flyout {
+  height: auto;
+}
+
+.settings {
+  height: 100%;
 }
 
 .settings-body {
@@ -154,13 +168,12 @@ textarea,
 }
 
 .flyout-body {
-  flex: 1;
-  overflow: hidden;
+  flex: 0 0 auto;
+  overflow: visible;
   padding: 6px 10px 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 0;
 }
 
 .glance-row {

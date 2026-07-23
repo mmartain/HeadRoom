@@ -64,10 +64,41 @@ export default function App() {
   const alerts = useRef(new AlertTracker());
   const saveTimer = useRef<number | null>(null);
   const settingsRef = useRef<AppSettings | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  // Size the tray flyout to its content; Settings keeps a taller fixed panel.
+  useEffect(() => {
+    if (isTopBar) return;
+
+    if (view === "settings") {
+      void invoke("fit_flyout_size", { height: 560 });
+      return;
+    }
+
+    const el = shellRef.current;
+    if (!el) return;
+
+    let frame = 0;
+    const apply = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const h = Math.ceil(el.getBoundingClientRect().height);
+        if (h > 0) void invoke("fit_flyout_size", { height: h });
+      });
+    };
+
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [isTopBar, view, snapshots, settings?.enabled]);
 
   const applySnapshots = useCallback((next: UsageSnapshot[]) => {
     setSnapshots(next);
@@ -239,7 +270,10 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      ref={shellRef}
+      className={`app-shell ${view === "settings" ? "app-shell--settings" : "app-shell--flyout"}`}
+    >
       {view === "flyout" ? (
         <Flyout
           snapshots={snapshots}

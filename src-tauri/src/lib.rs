@@ -311,21 +311,53 @@ fn flush_overlay_position_save(app: &AppHandle) {
     persist_overlay_logical(px as f64 / scale, py as f64 / scale);
 }
 
-fn position_flyout_near_tray(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        // Place near bottom-right of primary monitor (typical tray corner on Win11)
-        if let Ok(Some(monitor)) = win.current_monitor() {
-            let size = monitor.size();
-            let scale = monitor.scale_factor();
-            let win_w = 360.0;
-            let win_h = 520.0;
-            let margin = 12.0;
-            let x = (size.width as f64 / scale) - win_w - margin;
-            let y = (size.height as f64 / scale) - win_h - 48.0;
-            let _ = win.set_size(tauri::LogicalSize::new(win_w, win_h));
-            let _ = win.set_position(tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)));
-        }
+/// Last fitted flyout height (logical px). 0 = use estimate from provider count.
+static FLYOUT_HEIGHT_PX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn estimate_flyout_height() -> f64 {
+    let n = enabled_provider_count() as f64;
+    // Header + footer + chrome ≈ 110; each provider pill ≈ 88.
+    (110.0 + n * 88.0).clamp(220.0, 900.0)
+}
+
+fn flyout_height_logical() -> f64 {
+    let stored = FLYOUT_HEIGHT_PX.load(Ordering::Relaxed);
+    if stored > 0 {
+        (stored as f64).clamp(200.0, 900.0)
+    } else {
+        estimate_flyout_height()
     }
+}
+
+fn place_flyout(app: &AppHandle, win_h: f64) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let win_w = 360.0;
+    let win_h = win_h.clamp(200.0, 900.0);
+    if let Ok(Some(monitor)) = win.current_monitor() {
+        let size = monitor.size();
+        let scale = monitor.scale_factor();
+        let margin = 12.0;
+        let x = (size.width as f64 / scale) - win_w - margin;
+        let y = (size.height as f64 / scale) - win_h - 48.0;
+        let _ = win.set_size(tauri::LogicalSize::new(win_w, win_h));
+        let _ = win.set_position(tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)));
+    } else {
+        let _ = win.set_size(tauri::LogicalSize::new(win_w, win_h));
+    }
+}
+
+fn position_flyout_near_tray(app: &AppHandle) {
+    place_flyout(app, flyout_height_logical());
+}
+
+#[tauri::command]
+fn fit_flyout_size(app: AppHandle, height: f64) -> Result<(), String> {
+    let h = height.round().clamp(200.0, 900.0);
+    FLYOUT_HEIGHT_PX.store(h as u32, Ordering::Relaxed);
+    place_flyout(&app, h);
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -463,6 +495,7 @@ pub fn run() {
             set_settings,
             show_flyout,
             hide_flyout,
+            fit_flyout_size,
             set_overlay_visible,
             get_overlay_visible,
             update_tray_status,
