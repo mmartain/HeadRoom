@@ -7,6 +7,8 @@ Built with [Tauri 2](https://tauri.app/) + React.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D4)](https://github.com/mmartain/HeadRoom)
 
+![HeadRoom tray flyout and overlay](docs/screenshot.png)
+
 ## Features
 
 - System tray icon with flyout panel
