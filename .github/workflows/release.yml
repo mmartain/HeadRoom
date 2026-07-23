@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build/publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify version files match tag
+        shell: bash
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAURI=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO=$(node -p "require('fs').readFileSync('src-tauri/Cargo.toml','utf8').match(/^version\\s*=\\s*\"([^\"]+)\"/m)[1]")
+          echo "package.json=$PKG tauri.conf=$TAURI Cargo.toml=$CARGO tag=${{ steps.meta.outputs.version }}"
+          test "$PKG" = "${{ steps.meta.outputs.version }}"
+          test "$TAURI" = "${{ steps.meta.outputs.version }}"
+          test "$CARGO" = "${{ steps.meta.outputs.version }}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build Tauri (portable + NSIS)
+        run: npx tauri build
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+
+      - name: Package release artifacts
+        run: node scripts/package-artifacts.mjs
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: HeadRoom ${{ steps.meta.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.meta.outputs.tag, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            portable/HeadRoom.exe
+            portable/*-setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
