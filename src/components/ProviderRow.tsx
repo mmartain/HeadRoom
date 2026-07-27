@@ -1,4 +1,5 @@
 import type { UsageSnapshot, UsageWindow } from "../providers/types";
+import { windowBarColor } from "../lib/windowColors";
 
 function formatReset(resetsAt: string | null): string | null {
   if (!resetsAt) return null;
@@ -16,21 +17,30 @@ function formatReset(resetsAt: string | null): string | null {
   return `${mins}m`;
 }
 
-/** Keep the flyout short: at most two usage windows per provider. */
+/** Keep the flyout compact: at most three usage windows per provider. */
 function pickWindows(windows: UsageWindow[]): UsageWindow[] {
   const withPct = windows.filter((w) => w.usedPercent != null);
   const without = windows.filter((w) => w.usedPercent == null);
-  const picked = [...withPct.slice(0, 2)];
-  if (picked.length < 2 && without[0]) picked.push(without[0]);
-  return picked.slice(0, 2);
+  const picked = [...withPct.slice(0, 3)];
+  if (picked.length < 3 && without[0]) picked.push(without[0]);
+  return picked.slice(0, 3);
 }
 
-function WindowBar({ window, accent }: { window: UsageWindow; accent: string }) {
+function WindowBar({
+  window,
+  color,
+}: {
+  window: UsageWindow;
+  color: string;
+}) {
   const used = window.usedPercent;
   return (
     <div className="window-row">
       <div className="window-meta">
-        <span className="window-label">{window.label}</span>
+        <span className="window-label">
+          <span className="window-swatch" style={{ background: color }} />
+          {window.label}
+        </span>
         <span className="window-remaining">
           {window.remainingLabel ??
             (used != null ? `${Math.max(0, 100 - used).toFixed(0)}% left` : "—")}
@@ -42,7 +52,7 @@ function WindowBar({ window, accent }: { window: UsageWindow; accent: string }) 
             className="bar-fill"
             style={{
               width: `${Math.min(100, Math.max(0, used))}%`,
-              background: accent,
+              background: color,
             }}
           />
         </div>
@@ -73,8 +83,12 @@ export function ProviderRow({ snapshot, accentColor }: Props) {
 
       {snapshot.status === "ok" && windows.length > 0 && (
         <div className="windows">
-          {windows.map((w) => (
-            <WindowBar key={w.id} window={w} accent={accentColor} />
+          {windows.map((w, i) => (
+            <WindowBar
+              key={w.id}
+              window={w}
+              color={windowBarColor(i, accentColor)}
+            />
           ))}
         </div>
       )}

@@ -311,6 +311,19 @@ button.linkish {
   font-size: 11px;
 }
 
+.window-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.window-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
 .window-remaining {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 10px;
@@ -318,11 +331,11 @@ button.linkish {
 }
 
 .bar-track {
-  height: 3px;
+  height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.14);
   overflow: hidden;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .bar-fill {
@@ -469,12 +482,16 @@ button.save-field {
 
 .status-cell {
   display: grid;
-  grid-template-columns: 6px minmax(0, auto) minmax(36px, 1fr) auto;
+  grid-template-columns: 6px minmax(0, auto) minmax(48px, 1fr) auto;
   align-items: center;
   gap: 5px;
   min-width: 0;
   height: 100%;
   padding: 0 8px;
+}
+
+.status-cell.has-inline-pct {
+  grid-template-columns: 6px minmax(0, auto) minmax(72px, 1fr);
 }
 
 .status-cell + .status-cell {
@@ -497,17 +514,45 @@ button.save-field {
   text-overflow: ellipsis;
 }
 
+.status-meters {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  min-width: 72px;
+  flex: 1;
+}
+
 .status-meter {
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  position: relative;
+  flex: 1;
+  height: 18px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.16);
   overflow: hidden;
   min-width: 28px;
 }
 
 .status-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
   height: 100%;
   border-radius: inherit;
+}
+
+.status-meter-label {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 0 2px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85), 0 1px 2px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
 }
 
 .status-value {

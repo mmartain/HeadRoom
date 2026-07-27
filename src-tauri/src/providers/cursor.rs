@@ -189,28 +189,41 @@ fn parse_usage_summary(body: &Value) -> UsageSnapshot {
     let auto = plan.get("autoPercentUsed").and_then(as_f64);
     let api = plan.get("apiPercentUsed").and_then(as_f64);
 
-    if let Some(pct) = total {
+    // Prefer Cursor Models / Other Models when they carry real usage.
+    // If both are present but zero while total has usage, fall back to Included
+    // (Cursor sometimes returns 0 for unused breakdown fields).
+    let specific_nonzero =
+        auto.map(|p| p > 0.0).unwrap_or(false) || api.map(|p| p > 0.0).unwrap_or(false);
+    let use_specific = match (auto.is_some() || api.is_some(), specific_nonzero, total) {
+        (false, _, _) => false,
+        (true, true, _) => true,
+        (true, false, Some(t)) if t > 0.0 => false,
+        (true, false, _) => true,
+    };
+
+    if use_specific {
+        if let Some(pct) = auto {
+            windows.push(UsageWindow {
+                id: "cursor_models".into(),
+                label: "Cursor Models".into(),
+                used_percent: Some(pct.clamp(0.0, 100.0)),
+                remaining_label: Some(format!("{:.0}% left", (100.0 - pct).clamp(0.0, 100.0))),
+                resets_at: billing_end.clone(),
+            });
+        }
+        if let Some(pct) = api {
+            windows.push(UsageWindow {
+                id: "other_models".into(),
+                label: "Other Models".into(),
+                used_percent: Some(pct.clamp(0.0, 100.0)),
+                remaining_label: Some(format!("{:.0}% left", (100.0 - pct).clamp(0.0, 100.0))),
+                resets_at: billing_end.clone(),
+            });
+        }
+    } else if let Some(pct) = total {
         windows.push(UsageWindow {
             id: "total".into(),
             label: "Included".into(),
-            used_percent: Some(pct.clamp(0.0, 100.0)),
-            remaining_label: Some(format!("{:.0}% left", (100.0 - pct).clamp(0.0, 100.0))),
-            resets_at: billing_end.clone(),
-        });
-    }
-    if let Some(pct) = auto {
-        windows.push(UsageWindow {
-            id: "auto".into(),
-            label: "Auto + Composer".into(),
-            used_percent: Some(pct.clamp(0.0, 100.0)),
-            remaining_label: Some(format!("{:.0}% left", (100.0 - pct).clamp(0.0, 100.0))),
-            resets_at: billing_end.clone(),
-        });
-    }
-    if let Some(pct) = api {
-        windows.push(UsageWindow {
-            id: "api".into(),
-            label: "API".into(),
             used_percent: Some(pct.clamp(0.0, 100.0)),
             remaining_label: Some(format!("{:.0}% left", (100.0 - pct).clamp(0.0, 100.0))),
             resets_at: billing_end.clone(),
@@ -226,15 +239,17 @@ fn parse_usage_summary(body: &Value) -> UsageSnapshot {
                 (Some(u), Some(l)) if l > 0.0 => Some((u / l) * 100.0),
                 _ => None,
             };
-            let remaining_label = match (remaining, used) {
-                (Some(r), _) => Some(format!("${:.2} on-demand left", r / 100.0)),
-                (_, Some(u)) => Some(format!("${:.2} on-demand spent", u / 100.0)),
-                _ => None,
+            let remaining_label = match (used, limit) {
+                (Some(u), Some(l)) => {
+                    Some(format!("${:.2} / ${:.0}", u / 100.0, l / 100.0))
+                }
+                (Some(u), None) => Some(format!("${:.2} on-demand spent", u / 100.0)),
+                (None, _) => remaining.map(|r| format!("${:.2} on-demand left", r / 100.0)),
             };
             if used_percent.is_some() || remaining_label.is_some() {
                 windows.push(UsageWindow {
                     id: "on_demand".into(),
-                    label: "On-demand".into(),
+                    label: "On-Demand".into(),
                     used_percent: used_percent.map(|p| p.clamp(0.0, 100.0)),
                     remaining_label,
                     resets_at: billing_end.clone(),

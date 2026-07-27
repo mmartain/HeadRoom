@@ -26,7 +26,7 @@ export function mergeSettings(raw: Record<string, unknown> | null | undefined): 
       : 92;
   return {
     enabled,
-    overlayVisible: Boolean(raw?.overlayVisible ?? false),
+    overlayVisible: Boolean(raw?.overlayVisible ?? true),
     overlayOpacity,
     overlayHideNearMouse: Boolean(raw?.overlayHideNearMouse ?? true),
     alertThresholds: Array.isArray(raw?.alertThresholds)

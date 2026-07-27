@@ -8,7 +8,8 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, Monitor, RunEvent, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 
 /// Last known "home" position of the top bar (physical pixels). Used while ducked.
@@ -81,8 +82,10 @@ fn set_overlay_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("overlay") {
         if visible {
             apply_overlay_layout(&app);
+            let _ = win.set_always_on_top(true);
             let _ = win.show();
         } else {
+            persist_overlay_position_from_window(&app);
             capture_overlay_home(&app);
             let _ = win.hide();
         }
@@ -101,20 +104,8 @@ fn set_overlay_visible(app: AppHandle, visible: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_overlay_visible(app: AppHandle) -> Result<bool, String> {
-    let settings = credential_store::get_settings().unwrap_or_else(|_| json!({}));
-    let preferred = settings
-        .get("overlayVisible")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if preferred {
-        ensure_overlay(&app)?;
-        apply_overlay_layout(&app);
-        if let Some(win) = app.get_webview_window("overlay") {
-            let _ = win.show();
-        }
-    }
-    Ok(preferred)
+fn get_overlay_visible(_app: AppHandle) -> Result<bool, String> {
+    Ok(overlay_user_wants_visible())
 }
 
 #[tauri::command]
@@ -169,7 +160,7 @@ fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
     }
     let win = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html".into()))
         .title("Usage Overlay")
-        .inner_size(620.0, 32.0)
+        .inner_size(713.0, 40.0)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
@@ -205,6 +196,88 @@ fn persist_overlay_logical(x: f64, y: f64) {
     }
 }
 
+fn monitor_logical_bounds(monitor: &Monitor) -> Option<(f64, f64, f64, f64)> {
+    let scale = monitor.scale_factor();
+    if scale <= 0.0 {
+        return None;
+    }
+    let size = monitor.size();
+    let position = monitor.position();
+    let origin_x = position.x as f64 / scale;
+    let origin_y = position.y as f64 / scale;
+    let screen_w = size.width as f64 / scale;
+    let screen_h = size.height as f64 / scale;
+    if screen_w <= 1.0 || screen_h <= 1.0 {
+        return None;
+    }
+    Some((origin_x, origin_y, screen_w, screen_h))
+}
+
+/// Prefer the monitor that contains the point; otherwise primary / first available.
+fn monitor_for_logical_point(app: &AppHandle, x: f64, y: f64) -> Option<Monitor> {
+    let monitors = app.available_monitors().ok().unwrap_or_default();
+    for monitor in &monitors {
+        if let Some((ox, oy, w, h)) = monitor_logical_bounds(monitor) {
+            if x >= ox && x < ox + w && y >= oy && y < oy + h {
+                return Some(monitor.clone());
+            }
+        }
+    }
+    app.primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| monitors.into_iter().next())
+}
+
+fn clamp_into_monitor(
+    monitor: &Monitor,
+    x: f64,
+    y: f64,
+    bar_w: f64,
+    bar_h: f64,
+) -> Option<(f64, f64)> {
+    let (origin_x, origin_y, screen_w, screen_h) = monitor_logical_bounds(monitor)?;
+    let margin = 4.0;
+    let max_x = (origin_x + screen_w - bar_w - margin).max(origin_x + margin);
+    let max_y = (origin_y + screen_h - bar_h - margin).max(origin_y + margin);
+    Some((
+        x.clamp(origin_x + margin, max_x),
+        y.clamp(origin_y + margin, max_y),
+    ))
+}
+
+/// Keep the overlay fully inside a real monitor. If the saved spot is on a
+/// disconnected display, fall back to the provided default (usually top-center).
+fn clamp_overlay_logical(
+    app: &AppHandle,
+    x: f64,
+    y: f64,
+    bar_w: f64,
+    bar_h: f64,
+    default_x: f64,
+    default_y: f64,
+) -> (f64, f64) {
+    let monitors = app.available_monitors().ok().unwrap_or_default();
+    let on_a_monitor = monitors.iter().any(|m| {
+        monitor_logical_bounds(m)
+            .map(|(ox, oy, w, h)| x >= ox && x < ox + w && y >= oy && y < oy + h)
+            .unwrap_or(false)
+    });
+
+    let (use_x, use_y) = if on_a_monitor {
+        (x, y)
+    } else {
+        (default_x, default_y)
+    };
+
+    if let Some(monitor) = monitor_for_logical_point(app, use_x, use_y) {
+        if let Some(clamped) = clamp_into_monitor(&monitor, use_x, use_y, bar_w, bar_h) {
+            return clamped;
+        }
+    }
+    (default_x, default_y)
+}
+
 fn capture_overlay_home(app: &AppHandle) {
     let Some(win) = app.get_webview_window("overlay") else {
         return;
@@ -214,6 +287,21 @@ fn capture_overlay_home(app: &AppHandle) {
             *home = Some((pos.x, pos.y));
         }
     }
+}
+
+fn persist_overlay_position_from_window(app: &AppHandle) {
+    flush_overlay_position_save(app);
+    let Some(win) = app.get_webview_window("overlay") else {
+        return;
+    };
+    let Ok(pos) = win.outer_position() else {
+        return;
+    };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    if scale <= 0.0 {
+        return;
+    }
+    persist_overlay_logical(pos.x as f64 / scale, pos.y as f64 / scale);
 }
 
 fn enabled_provider_count() -> usize {
@@ -234,8 +322,9 @@ fn default_overlay_logical(win: &WebviewWindow) -> (f64, f64, f64, f64) {
         .ok()
         .flatten()
         .or_else(|| win.current_monitor().ok().flatten());
+    let bar_h = 40.0;
     let Some(monitor) = monitor else {
-        return (520.0, 32.0, 24.0, 8.0);
+        return (598.0, bar_h, 24.0, 8.0);
     };
     let size = monitor.size();
     let position = monitor.position();
@@ -244,13 +333,12 @@ fn default_overlay_logical(win: &WebviewWindow) -> (f64, f64, f64, f64) {
     let origin_x = position.x as f64 / scale;
     let origin_y = position.y as f64 / scale;
     let n = enabled_provider_count() as f64;
-    // Prefer ~200px per enabled provider, never wider than the screen,
-    // and at least 360px unless the display itself is narrower.
+    // Prefer ~230px per enabled provider (~15% wider than the old 200px),
+    // never wider than the screen, and at least 414px unless the display is narrower.
     let available = (screen_w - 24.0).max(1.0);
-    let preferred = 200.0 * n;
-    let min_w = 360.0_f64.min(available);
+    let preferred = 230.0 * n;
+    let min_w = 414.0_f64.min(available);
     let bar_w = preferred.clamp(min_w, available);
-    let bar_h = 32.0;
     let x = origin_x + (screen_w - bar_w) / 2.0;
     let y = origin_y + 8.0;
     (bar_w, bar_h, x, y)
@@ -262,7 +350,10 @@ fn apply_overlay_layout(app: &AppHandle) {
         return;
     };
     let (bar_w, bar_h, default_x, default_y) = default_overlay_logical(&win);
-    let (x, y) = overlay_saved_logical().unwrap_or((default_x, default_y));
+    let (raw_x, raw_y) = overlay_saved_logical().unwrap_or((default_x, default_y));
+    let (x, y) = clamp_overlay_logical(app, raw_x, raw_y, bar_w, bar_h, default_x, default_y);
+    // Always persist the on-screen placement so restarts reopen in a visible spot.
+    persist_overlay_logical(x, y);
 
     OVERLAY_SKIP_MOVE_SAVE.store(true, Ordering::SeqCst);
     let _ = win.set_size(tauri::LogicalSize::new(bar_w, bar_h));
@@ -273,6 +364,18 @@ fn apply_overlay_layout(app: &AppHandle) {
         std::thread::sleep(std::time::Duration::from_millis(250));
         OVERLAY_SKIP_MOVE_SAVE.store(false, Ordering::SeqCst);
     });
+}
+
+fn restore_overlay_on_startup(app: &AppHandle) {
+    if !overlay_user_wants_visible() {
+        return;
+    }
+    let _ = ensure_overlay(app);
+    apply_overlay_layout(app);
+    if let Some(win) = app.get_webview_window("overlay") {
+        let _ = win.set_always_on_top(true);
+        let _ = win.show();
+    }
 }
 
 fn attach_overlay_move_listener(win: &WebviewWindow) {
@@ -380,7 +483,7 @@ fn overlay_user_wants_visible() -> bool {
     credential_store::get_settings()
         .ok()
         .and_then(|s| s.get("overlayVisible").and_then(|v| v.as_bool()))
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 fn overlay_hide_near_mouse_enabled() -> bool {
@@ -419,19 +522,52 @@ fn cursor_near_overlay(app: &AppHandle) -> bool {
 
 fn show_overlay_at_home(app: &AppHandle) {
     let _ = ensure_overlay(app);
-    if let Some(win) = app.get_webview_window("overlay") {
-        // Restore last dragged spot if Windows moved it while hidden; otherwise leave as-is.
-        if let Ok(home) = OVERLAY_HOME_PHYSICAL.lock() {
-            if let Some((x, y)) = *home {
-                OVERLAY_SKIP_MOVE_SAVE.store(true, Ordering::SeqCst);
-                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-                std::thread::spawn(|| {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                    OVERLAY_SKIP_MOVE_SAVE.store(false, Ordering::SeqCst);
-                });
-            }
-        }
-        let _ = win.show();
+    let Some(win) = app.get_webview_window("overlay") else {
+        return;
+    };
+
+    let home = OVERLAY_HOME_PHYSICAL.lock().ok().and_then(|g| *g);
+    if let Some((px, py)) = home {
+        let (bar_w, bar_h, default_x, default_y) = default_overlay_logical(&win);
+        let scale = win.scale_factor().unwrap_or(1.0).max(0.0001);
+        let (x, y) = clamp_overlay_logical(
+            app,
+            px as f64 / scale,
+            py as f64 / scale,
+            bar_w,
+            bar_h,
+            default_x,
+            default_y,
+        );
+        OVERLAY_SKIP_MOVE_SAVE.store(true, Ordering::SeqCst);
+        let _ = win.set_size(tauri::LogicalSize::new(bar_w, bar_h));
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        capture_overlay_home(app);
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            OVERLAY_SKIP_MOVE_SAVE.store(false, Ordering::SeqCst);
+        });
+    } else {
+        apply_overlay_layout(app);
+    }
+
+    let _ = win.set_always_on_top(true);
+    let _ = win.show();
+}
+
+fn capture_overlay_home_forced(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("overlay") else {
+        return;
+    };
+    let Ok(pos) = win.outer_position() else {
+        return;
+    };
+    if let Ok(mut home) = OVERLAY_HOME_PHYSICAL.lock() {
+        *home = Some((pos.x, pos.y));
+    }
+    let scale = win.scale_factor().unwrap_or(1.0);
+    if scale > 0.0 {
+        persist_overlay_logical(pos.x as f64 / scale, pos.y as f64 / scale);
     }
 }
 
@@ -455,8 +591,8 @@ fn start_overlay_mouse_dodge(app: AppHandle) {
             }
             let near = cursor_near_overlay(&app);
             if near && !ducked {
-                capture_overlay_home(&app);
-                flush_overlay_position_save(&app);
+                // Capture the live window position even if a layout skip window is open.
+                capture_overlay_home_forced(&app);
                 if let Some(win) = app.get_webview_window("overlay") {
                     let _ = win.hide();
                 }
@@ -533,7 +669,7 @@ pub fn run() {
                         let _ = app.emit("open-flyout", ());
                     }
                     "overlay" => {
-                        let current = get_overlay_visible(app.clone()).unwrap_or(false);
+                        let current = overlay_user_wants_visible();
                         let next = !current;
                         let _ = set_overlay_visible(app.clone(), next);
                         if next {
@@ -572,12 +708,17 @@ pub fn run() {
                 let _ = win.hide();
             }
 
-            // Restore overlay preference
-            let _ = get_overlay_visible(app.handle().clone());
+            // Restore top-bar visibility + on-screen position from last session
+            restore_overlay_on_startup(app.handle());
             start_overlay_mouse_dodge(app.handle().clone());
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running HeadRoom");
+        .build(tauri::generate_context!())
+        .expect("error while building HeadRoom")
+        .run(|app_handle, event| {
+            if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+                persist_overlay_position_from_window(app_handle);
+            }
+        });
 }
