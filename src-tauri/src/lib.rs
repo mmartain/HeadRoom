@@ -160,7 +160,7 @@ fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
     }
     let win = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html".into()))
         .title("Usage Overlay")
-        .inner_size(713.0, 40.0)
+        .inner_size(713.0 * overlay_zoom_factor(), 40.0 * overlay_zoom_factor())
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
@@ -316,15 +316,26 @@ fn enabled_provider_count() -> usize {
         .max(1)
 }
 
+/// Top-bar zoom from settings (75–150%), default 100%.
+fn overlay_zoom_factor() -> f64 {
+    credential_store::get_settings()
+        .ok()
+        .and_then(|s| s.get("overlayZoom").and_then(|v| v.as_f64()))
+        .unwrap_or(100.0)
+        .clamp(75.0, 150.0)
+        / 100.0
+}
+
 fn default_overlay_logical(win: &WebviewWindow) -> (f64, f64, f64, f64) {
     let monitor = win
         .primary_monitor()
         .ok()
         .flatten()
         .or_else(|| win.current_monitor().ok().flatten());
-    let bar_h = 40.0;
+    let zoom = overlay_zoom_factor();
+    let bar_h = 40.0 * zoom;
     let Some(monitor) = monitor else {
-        return (598.0, bar_h, 24.0, 8.0);
+        return (598.0 * zoom, bar_h, 24.0, 8.0);
     };
     let size = monitor.size();
     let position = monitor.position();
@@ -336,8 +347,8 @@ fn default_overlay_logical(win: &WebviewWindow) -> (f64, f64, f64, f64) {
     // Prefer ~230px per enabled provider (~15% wider than the old 200px),
     // never wider than the screen, and at least 414px unless the display is narrower.
     let available = (screen_w - 24.0).max(1.0);
-    let preferred = 230.0 * n;
-    let min_w = 414.0_f64.min(available);
+    let preferred = 230.0 * n * zoom;
+    let min_w = (414.0 * zoom).min(available);
     let bar_w = preferred.clamp(min_w, available);
     let x = origin_x + (screen_w - bar_w) / 2.0;
     let y = origin_y + 8.0;
@@ -376,6 +387,38 @@ fn restore_overlay_on_startup(app: &AppHandle) {
         let _ = win.set_always_on_top(true);
         let _ = win.show();
     }
+}
+
+#[tauri::command]
+fn refresh_overlay_layout(app: AppHandle, zoom: Option<f64>) -> Result<(), String> {
+    if let Some(z) = zoom {
+        let mut settings = credential_store::get_settings().unwrap_or_else(|_| json!({}));
+        if !settings.is_object() {
+            settings = json!({});
+        }
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("overlayZoom".into(), json!(z.clamp(75.0, 150.0)));
+            let _ = credential_store::set_settings(settings);
+        }
+    }
+    if !overlay_user_wants_visible() {
+        return Ok(());
+    }
+    ensure_overlay(&app)?;
+    // Don't force-show: while mouse-ducked the window is intentionally hidden
+    // even though overlayVisible stays true.
+    let was_visible = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    apply_overlay_layout(&app);
+    if let Some(win) = app.get_webview_window("overlay") {
+        let _ = win.set_always_on_top(true);
+        if was_visible {
+            let _ = win.show();
+        }
+    }
+    Ok(())
 }
 
 fn attach_overlay_move_listener(win: &WebviewWindow) {
@@ -634,6 +677,7 @@ pub fn run() {
             fit_flyout_size,
             set_overlay_visible,
             get_overlay_visible,
+            refresh_overlay_layout,
             update_tray_status,
         ])
         .setup(|app| {

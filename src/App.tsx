@@ -29,6 +29,7 @@ function mergePartial(payload: Record<string, unknown>): Partial<AppSettings> {
   return {
     overlayVisible: merged.overlayVisible,
     overlayOpacity: merged.overlayOpacity,
+    overlayZoom: merged.overlayZoom,
     overlayHideNearMouse: merged.overlayHideNearMouse,
     enabled: merged.enabled,
     pollIntervalSec: merged.pollIntervalSec,
@@ -219,6 +220,9 @@ export default function App() {
     await saveSettings(next);
     await emit("settings-changed", next);
     await invoke("set_overlay_visible", { visible: next.overlayVisible });
+    if (next.overlayVisible && prev?.overlayZoom !== next.overlayZoom) {
+      await invoke("refresh_overlay_layout", { zoom: next.overlayZoom });
+    }
     const providersChanged =
       !prev || JSON.stringify(prev.enabled) !== JSON.stringify(next.enabled);
     if (providersChanged) {
@@ -232,6 +236,23 @@ export default function App() {
     const next = { ...current, overlayOpacity: opacity };
     setSettings(next);
     void emit("settings-changed", next);
+    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      void saveSettings(next);
+    }, 250);
+  }
+
+  function liveZoom(zoom: number) {
+    const current = settingsRef.current;
+    if (!current) return;
+    const next = { ...current, overlayZoom: zoom };
+    // Update settings UI immediately; resize the native window first, then
+    // broadcast so the overlay webview scales after the new size is applied.
+    setSettings(next);
+    void (async () => {
+      await invoke("refresh_overlay_layout", { zoom });
+      await emit("settings-changed", next);
+    })();
     if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       void saveSettings(next);
@@ -258,8 +279,17 @@ export default function App() {
   }
 
   if (isTopBar) {
+    const z = Math.min(150, Math.max(75, settings.overlayZoom)) / 100;
     return (
-      <div className="overlay-root">
+      <div
+        className="overlay-root"
+        style={{
+          width: `${100 / z}%`,
+          height: `${100 / z}%`,
+          transform: `scale(${z})`,
+          transformOrigin: "top left",
+        }}
+      >
         <Overlay
           snapshots={snapshots}
           enabled={settings.enabled}
@@ -290,6 +320,7 @@ export default function App() {
           settings={settings}
           onChange={(next) => void updateSettings(next)}
           onOpacityLive={liveOpacity}
+          onZoomLive={liveZoom}
           onClose={() => setView("flyout")}
         />
       )}

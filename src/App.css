@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@700&display=swap");
 
 :root {
   color-scheme: dark;
@@ -525,8 +525,11 @@ button.save-field {
 
 .status-meter {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 1;
-  height: 18px;
+  height: 20px;
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.16);
   overflow: hidden;
@@ -540,19 +543,43 @@ button.save-field {
   border-radius: inherit;
 }
 
-.status-meter-label {
+/* A11c — JetBrains Mono 13px bold, adaptive ink + outline/drop */
+.status-meter-label,
+.status-meter-label.mono {
   position: relative;
   z-index: 1;
   display: grid;
   place-items: center;
   height: 100%;
   padding: 0 2px;
-  font-size: 10px;
-  font-weight: 500;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   line-height: 1;
-  color: #fff;
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85), 0 1px 2px rgba(0, 0, 0, 0.7);
+  background: none;
   white-space: nowrap;
+  -webkit-font-smoothing: antialiased;
+}
+
+.status-meter-label.is-on-fill {
+  color: #0a0c10;
+  text-shadow:
+    1px 0 0 rgba(255, 255, 255, 0.5),
+    -1px 0 0 rgba(255, 255, 255, 0.5),
+    0 1px 0 rgba(255, 255, 255, 0.5),
+    0 -1px 0 rgba(255, 255, 255, 0.5),
+    0 2px 3px rgba(0, 0, 0, 0.35);
+}
+
+.status-meter-label.is-on-track {
+  color: #ffffff;
+  text-shadow:
+    1px 0 0 #000,
+    -1px 0 0 #000,
+    0 1px 0 #000,
+    0 -1px 0 #000,
+    0 2px 4px rgba(0, 0, 0, 0.85);
 }
 
 .status-value {

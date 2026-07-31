@@ -7,6 +7,8 @@ export type AppSettings = {
   overlayVisible: boolean;
   /** 0 = fully transparent background, 100 = solid. */
   overlayOpacity: number;
+  /** Top bar scale percent. 100 = current default size. */
+  overlayZoom: number;
   /** Hide the top bar when the mouse approaches so clicks pass through. */
   overlayHideNearMouse: boolean;
   alertThresholds: number[];
@@ -24,10 +26,16 @@ export function mergeSettings(raw: Record<string, unknown> | null | undefined): 
     typeof opacityRaw === "number" && Number.isFinite(opacityRaw)
       ? Math.min(100, Math.max(0, opacityRaw))
       : 92;
+  const zoomRaw = raw?.overlayZoom;
+  const overlayZoom =
+    typeof zoomRaw === "number" && Number.isFinite(zoomRaw)
+      ? Math.min(150, Math.max(75, zoomRaw))
+      : 100;
   return {
     enabled,
     overlayVisible: Boolean(raw?.overlayVisible ?? true),
     overlayOpacity,
+    overlayZoom,
     overlayHideNearMouse: Boolean(raw?.overlayHideNearMouse ?? true),
     alertThresholds: Array.isArray(raw?.alertThresholds)
       ? (raw!.alertThresholds as number[])

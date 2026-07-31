@@ -211,7 +211,11 @@ export function Overlay({ snapshots, enabled, opacity }: Props) {
                       }}
                     />
                     {remaining != null && (
-                      <span className="status-meter-label mono">
+                      <span
+                        className={`status-meter-label mono ${
+                          used != null && used >= 50 ? "is-on-fill" : "is-on-track"
+                        }`}
+                      >
                         {remaining.toFixed(0)}%
                       </span>
                     )}

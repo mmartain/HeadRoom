@@ -8,6 +8,7 @@ type Props = {
   settings: AppSettings;
   onChange: (next: AppSettings) => void;
   onOpacityLive: (opacity: number) => void;
+  onZoomLive: (zoom: number) => void;
   onClose: () => void;
 };
 
@@ -96,7 +97,13 @@ function ProviderSettings({ plugin }: { plugin: ProviderPlugin }) {
   );
 }
 
-export function SettingsForm({ settings, onChange, onOpacityLive, onClose }: Props) {
+export function SettingsForm({
+  settings,
+  onChange,
+  onOpacityLive,
+  onZoomLive,
+  onClose,
+}: Props) {
   const plugins = listPlugins();
 
   return (
@@ -160,9 +167,22 @@ export function SettingsForm({ settings, onChange, onOpacityLive, onClose }: Pro
               onChange={(e) => onOpacityLive(Number(e.target.value))}
             />
           </label>
+          <label className="field">
+            <span>Zoom ({settings.overlayZoom}%)</span>
+            <input
+              type="range"
+              min={75}
+              max={150}
+              step={5}
+              value={settings.overlayZoom}
+              onInput={(e) => onZoomLive(Number((e.target as HTMLInputElement).value))}
+              onChange={(e) => onZoomLive(Number(e.target.value))}
+            />
+          </label>
           <p className="muted detect-label">
             When “Hide when mouse is near” is on, the bar ducks away so you can click
-            title bars and tabs underneath. Tray: “Toggle top status bar”.
+            title bars and tabs underneath. Tray: “Toggle top status bar”. Zoom 100% is
+            the default size.
           </p>
         </section>
 
