@@ -1,6 +1,6 @@
 [package]
 name = "headroom"
-version = "0.2.1"
+version = "0.2.2"
 description = "Windows tray overlay for remaining AI coding usage"
 authors = ["HeadRoom"]
 edition = "2021"
