@@ -1,10 +1,12 @@
 use crate::credential_store;
+use crate::fs_util;
 use crate::providers::types::{UsageSnapshot, UsageWindow};
 use rusqlite::Connection;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 const PROVIDER_ID: &str = "cursor";
 const DISPLAY_NAME: &str = "Cursor";
@@ -12,6 +14,7 @@ const OAUTH_CLIENT_ID: &str = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB";
 
 static CURSOR_FETCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+static AUTH_CACHE: Mutex<Option<(Option<String>, Option<String>)>> = Mutex::new(None);
 
 fn state_db_path() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA")?;
@@ -24,6 +27,22 @@ fn state_db_path() -> Option<PathBuf> {
     )
 }
 
+fn cached_auth() -> Option<(Option<String>, Option<String>)> {
+    AUTH_CACHE.lock().ok()?.clone()
+}
+
+fn store_auth_cache(access: Option<String>, refresh: Option<String>) {
+    if let Ok(mut guard) = AUTH_CACHE.lock() {
+        *guard = Some((access, refresh));
+    }
+}
+
+fn clear_auth_cache() {
+    if let Ok(mut guard) = AUTH_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 fn read_auth_from_db(path: &PathBuf) -> Result<(Option<String>, Option<String>), String> {
     if !path.exists() {
         return Ok((None, None));
@@ -34,7 +53,13 @@ fn read_auth_from_db(path: &PathBuf) -> Result<(Option<String>, Option<String>),
         std::process::id(),
         seq
     ));
-    fs::copy(path, &tmp).map_err(|e| format!("Failed to copy Cursor state DB: {e}"))?;
+    if let Err(e) = fs_util::copy_shared_retry(path, &tmp, 4) {
+        let _ = fs::remove_file(&tmp);
+        if let Some(cached) = cached_auth() {
+            return Ok(cached);
+        }
+        return Err(format!("Failed to copy Cursor state DB: {e}"));
+    }
     let result = (|| {
         let conn = Connection::open(&tmp).map_err(|e| e.to_string())?;
         let access: Option<String> = conn
@@ -56,6 +81,11 @@ fn read_auth_from_db(path: &PathBuf) -> Result<(Option<String>, Option<String>),
         Ok((access, refresh))
     })();
     let _ = fs::remove_file(&tmp);
+    if let Ok((access, refresh)) = &result {
+        if access.is_some() || refresh.is_some() {
+            store_auth_cache(access.clone(), refresh.clone());
+        }
+    }
     result
 }
 
@@ -156,9 +186,14 @@ async fn refresh_access_token(refresh_token: &str) -> Result<Option<String>, Str
         .map(|s| s.to_string()))
 }
 
-async fn resolve_token() -> Result<(Option<String>, Option<String>), String> {
+fn resolve_token(force_reread: bool) -> Result<(Option<String>, Option<String>), String> {
     if let Some(override_token) = credential_store::get_secret(PROVIDER_ID, "accessToken")? {
         return Ok((Some(override_token), None));
+    }
+    if !force_reread {
+        if let Some(cached) = cached_auth() {
+            return Ok(cached);
+        }
     }
     let Some(path) = state_db_path() else {
         return Ok((None, None));
@@ -315,12 +350,34 @@ fn snapshot_from_http(status: u16, body_text: &str) -> UsageSnapshot {
     }
 }
 
+async fn fetch_after_refresh(refresh: &str) -> Option<UsageSnapshot> {
+    match refresh_access_token(refresh).await {
+        Ok(Some(new_token)) => {
+            let cached_refresh = cached_auth().and_then(|(_, r)| r);
+            store_auth_cache(Some(new_token.clone()), cached_refresh.or_else(|| Some(refresh.to_string())));
+            Some(match fetch_with_token(&new_token).await {
+                Ok((status, body)) => snapshot_from_http(status, &body),
+                Err(e) => UsageSnapshot::error(PROVIDER_ID, DISPLAY_NAME, &e),
+            })
+        }
+        Ok(None) => {
+            clear_auth_cache();
+            Some(UsageSnapshot::needs_auth(
+                PROVIDER_ID,
+                DISPLAY_NAME,
+                "Cursor refresh token revoked. Sign in again in Cursor.",
+            ))
+        }
+        Err(_) => None,
+    }
+}
+
 pub async fn fetch() -> UsageSnapshot {
     // Serialize Cursor fetches — flyout + top bar share one process and used to race
     // on the same temp copy of state.vscdb.
     let _guard = CURSOR_FETCH_LOCK.lock().await;
 
-    let (access, refresh) = match resolve_token().await {
+    let (access, refresh) = match resolve_token(false) {
         Ok(t) => t,
         Err(e) => return UsageSnapshot::error(PROVIDER_ID, DISPLAY_NAME, &e),
     };
@@ -339,22 +396,25 @@ pub async fn fetch() -> UsageSnapshot {
     };
 
     if first.0 == 401 || first.0 == 403 {
-        if let Some(refresh) = refresh {
-            match refresh_access_token(&refresh).await {
-                Ok(Some(new_token)) => {
-                    return match fetch_with_token(&new_token).await {
-                        Ok((status, body)) => snapshot_from_http(status, &body),
-                        Err(e) => UsageSnapshot::error(PROVIDER_ID, DISPLAY_NAME, &e),
-                    };
+        if let Some(ref refresh) = refresh {
+            if let Some(snapshot) = fetch_after_refresh(refresh).await {
+                return snapshot;
+            }
+        }
+        // Cursor may have written new tokens during restart — one extra DB read.
+        if let Ok((Some(access2), refresh2)) = resolve_token(true) {
+            if access2 != access {
+                match fetch_with_token(&access2).await {
+                    Ok((status, _body)) if status == 401 || status == 403 => {
+                        if let Some(ref refresh2) = refresh2 {
+                            if let Some(snapshot) = fetch_after_refresh(refresh2).await {
+                                return snapshot;
+                            }
+                        }
+                    }
+                    Ok((status, body)) => return snapshot_from_http(status, &body),
+                    Err(e) => return UsageSnapshot::error(PROVIDER_ID, DISPLAY_NAME, &e),
                 }
-                Ok(None) => {
-                    return UsageSnapshot::needs_auth(
-                        PROVIDER_ID,
-                        DISPLAY_NAME,
-                        "Cursor refresh token revoked. Sign in again in Cursor.",
-                    );
-                }
-                Err(_) => {}
             }
         }
     }

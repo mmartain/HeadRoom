@@ -1,4 +1,5 @@
 use crate::credential_store;
+use crate::fs_util;
 use crate::providers::types::{UsageSnapshot, UsageWindow};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -104,7 +105,10 @@ fn read_auth_from_vscdb(path: &PathBuf) -> Result<Option<(String, Option<String>
         std::process::id(),
         seq
     ));
-    fs::copy(path, &tmp).map_err(|e| format!("Failed to copy Devin state DB: {e}"))?;
+    if let Err(e) = fs_util::copy_shared_retry(path, &tmp, 4) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("Failed to copy Devin state DB: {e}"));
+    }
     let result = (|| {
         let conn = Connection::open(&tmp).map_err(|e| e.to_string())?;
         let status_raw: Option<String> = conn

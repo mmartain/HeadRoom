@@ -1,4 +1,5 @@
 mod credential_store;
+mod fs_util;
 mod providers;
 
 use providers::types::UsageSnapshot;
