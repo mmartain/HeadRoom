@@ -206,6 +206,18 @@ export function SettingsForm({
         </section>
 
         <section className="settings-block">
+          <h3>Notifications</h3>
+          <label className="toggle-row">
+            <span>Notify when limits reset</span>
+            <input
+              type="checkbox"
+              checked={settings.notifyOnReset}
+              onChange={(e) => onChange({ ...settings, notifyOnReset: e.target.checked })}
+            />
+          </label>
+        </section>
+
+        <section className="settings-block">
           <h3>Credentials</h3>
           <p className="muted detect-label">
             Values save when you leave a field. Paste a Devin service key here to connect.

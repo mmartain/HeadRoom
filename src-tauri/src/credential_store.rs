@@ -33,6 +33,10 @@ fn settings_path() -> Result<PathBuf, String> {
     Ok(app_config_dir()?.join("settings.json"))
 }
 
+fn last_resets_path() -> Result<PathBuf, String> {
+    Ok(app_config_dir()?.join("last_resets.json"))
+}
+
 fn read_json(path: &PathBuf) -> Result<Value, String> {
     if !path.exists() {
         return Ok(json!({}));
@@ -104,5 +108,22 @@ pub fn set_settings(value: Value) -> Result<(), String> {
         write_json(&path, &existing)
     } else {
         write_json(&path, &value)
+    }
+}
+
+/// Last-seen window reset timestamps, used to dedupe "limits reset"
+/// notifications across app restarts. Key format: `<providerId>:<windowId>`.
+pub fn get_last_resets() -> Result<Value, String> {
+    read_json(&last_resets_path()?)
+}
+
+/// Replace semantics: the frontend owns the full record (including pruning of
+/// disabled providers' windows).
+pub fn set_last_resets(value: Value) -> Result<(), String> {
+    let path = last_resets_path()?;
+    if value.is_object() {
+        write_json(&path, &value)
+    } else {
+        write_json(&path, &json!({}))
     }
 }

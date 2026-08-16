@@ -20,6 +20,7 @@ Built with [Tauri 2](https://tauri.app/) + React.
 - Optional Gemini CLI OAuth (`%USERPROFILE%\.gemini\oauth_creds.json`) — off by default
 - Optional Devin session / team service key overrides in Settings
 - Threshold toasts at 80% / 95% used
+- Notify when usage windows reset (Claude 5-hour, Devin daily, Cursor monthly, …) — including resets that happened while HeadRoom was closed
 - Modular **provider plugin** design (registry-only registration)
 - Single-instance portable EXE
 
@@ -105,8 +106,9 @@ Do **not** add `switch (provider)` in Flyout, Overlay, or alert code.
 
 | File | Purpose |
 |------|---------|
-| `%APPDATA%\headroom\settings.json` | Enabled providers, overlay, poll interval |
+| `%APPDATA%\headroom\settings.json` | Enabled providers, overlay, poll interval, notifications |
 | `%APPDATA%\headroom\secrets.json` | Optional pasted tokens / keys (local only) |
+| `%APPDATA%\headroom\last_resets.json` | Last-seen window reset timestamps (dedupes "limits reset" notifications across restarts) |
 
 ## License
 

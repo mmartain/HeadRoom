@@ -59,6 +59,16 @@ fn set_settings(settings: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_last_resets() -> Result<Value, String> {
+    credential_store::get_last_resets()
+}
+
+#[tauri::command]
+fn set_last_resets(state: Value) -> Result<(), String> {
+    credential_store::set_last_resets(state)
+}
+
+#[tauri::command]
 fn show_flyout(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
         position_flyout_near_tray(&app);
@@ -673,6 +683,8 @@ pub fn run() {
             set_secret,
             get_settings,
             set_settings,
+            get_last_resets,
+            set_last_resets,
             show_flyout,
             hide_flyout,
             fit_flyout_size,

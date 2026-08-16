@@ -13,6 +13,8 @@ export type AppSettings = {
   overlayHideNearMouse: boolean;
   alertThresholds: number[];
   pollIntervalSec: number;
+  /** Notify when a provider's usage window rolls over (limits reset). */
+  notifyOnReset: boolean;
 };
 
 export function mergeSettings(raw: Record<string, unknown> | null | undefined): AppSettings {
@@ -44,6 +46,7 @@ export function mergeSettings(raw: Record<string, unknown> | null | undefined): 
       typeof raw?.pollIntervalSec === "number" && raw.pollIntervalSec >= 30
         ? raw.pollIntervalSec
         : 120,
+    notifyOnReset: raw?.notifyOnReset !== false,
   };
 }
 
@@ -54,6 +57,15 @@ export async function loadSettings(): Promise<AppSettings> {
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   await invoke("set_settings", { settings });
+}
+
+/** Last-seen window reset timestamps, keyed `<providerId>:<windowId>`. */
+export async function loadLastResets(): Promise<Record<string, string | null>> {
+  return invoke<Record<string, string | null>>("get_last_resets");
+}
+
+export async function saveLastResets(state: Record<string, string | null>): Promise<void> {
+  await invoke("set_last_resets", { state });
 }
 
 export async function fetchSnapshots(enabled: Record<string, boolean>): Promise<UsageSnapshot[]> {

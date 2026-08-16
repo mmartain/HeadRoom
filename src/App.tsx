@@ -14,12 +14,15 @@ import type { UsageSnapshot } from "./providers/types";
 import {
   AlertTracker,
   fetchSnapshots,
+  loadLastResets,
   loadSettings,
   mergeSettings,
+  saveLastResets,
   saveSettings,
   worstRemainingPercent,
   type AppSettings,
 } from "./store/snapshots";
+import { ResetTracker } from "./store/resetTracker";
 import "./App.css";
 
 type View = "flyout" | "settings";
@@ -34,6 +37,7 @@ function mergePartial(payload: Record<string, unknown>): Partial<AppSettings> {
     enabled: merged.enabled,
     pollIntervalSec: merged.pollIntervalSec,
     alertThresholds: merged.alertThresholds,
+    notifyOnReset: merged.notifyOnReset,
   };
 }
 
@@ -63,6 +67,8 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [view, setView] = useState<View>("flyout");
   const alerts = useRef(new AlertTracker());
+  const resets = useRef(new ResetTracker());
+  const resetsSeeded = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const settingsRef = useRef<AppSettings | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -119,10 +125,8 @@ export default function App() {
           worstRemaining: worstRemainingPercent(next),
         });
 
-        const hits = alerts.current.evaluate(
-          next,
-          (await loadSettings()).alertThresholds,
-        );
+        const s = await loadSettings();
+        const hits = alerts.current.evaluate(next, s.alertThresholds);
         if (hits.length > 0 && (await ensureNotifyPermission())) {
           for (const hit of hits) {
             sendNotification({
@@ -131,6 +135,19 @@ export default function App() {
             });
           }
         }
+
+        const resetHits = resets.current.evaluate(next);
+        if (resetHits.length > 0 && s.notifyOnReset && (await ensureNotifyPermission())) {
+          for (const hit of resetHits) {
+            sendNotification({
+              title: `${hit.displayName} limits reset`,
+              body: `${hit.windowLabel} window refreshed${hit.usedPercent != null ? ` — ${hit.usedPercent.toFixed(0)}% used` : ""}.`,
+            });
+          }
+        }
+        // Persist unconditionally (even when the toggle is off) so the
+        // baseline stays fresh across restarts; prunes disabled providers.
+        await saveLastResets(resets.current.snapshot(enabled));
       } catch (err) {
         console.error(err);
       } finally {
@@ -153,6 +170,12 @@ export default function App() {
         // Top bar follows main window broadcasts; ask for a fresh pull once.
         await emit("request-refresh", null);
         return;
+      }
+      // Seed the reset tracker from last session so a reset that happened
+      // while the app was closed fires on the first poll.
+      if (!resetsSeeded.current) {
+        resets.current.seed(await loadLastResets());
+        resetsSeeded.current = true;
       }
       await refresh(s.enabled);
     })();
