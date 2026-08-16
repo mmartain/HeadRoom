@@ -1,6 +1,6 @@
 # HeadRoom
 
-Windows 11 system-tray app that shows **remaining AI coding usage** for Cursor, ChatGPT Codex, Claude, Gemini, and Devin — with an optional always-on-top overlay.
+Windows 11 system-tray app that shows **remaining AI coding usage** for Cursor, ChatGPT Codex, Claude, Gemini, Devin, and MiniMax — with an optional always-on-top overlay.
 
 Built with [Tauri 2](https://tauri.app/) + React.
 
@@ -19,6 +19,7 @@ Built with [Tauri 2](https://tauri.app/) + React.
 - Optional Claude Code login (`%USERPROFILE%\.claude\.credentials.json`) — off by default
 - Optional Gemini CLI OAuth (`%USERPROFILE%\.gemini\oauth_creds.json`) — off by default
 - Optional Devin session / team service key overrides in Settings
+- Optional MiniMax Token Plan usage via API key (`platform.minimax.io` → console → plan) — off by default
 - Threshold toasts at 80% / 95% used
 - Notify when usage windows reset (Claude 5-hour, Devin daily, Cursor monthly, …) — including resets that happened while HeadRoom was closed
 - Modular **provider plugin** design (registry-only registration)

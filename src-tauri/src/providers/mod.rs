@@ -3,6 +3,7 @@ mod codex;
 mod cursor;
 mod devin;
 mod gemini;
+mod minimax;
 pub mod types;
 
 use types::UsageSnapshot;
@@ -14,6 +15,7 @@ pub async fn fetch_usage(provider_id: &str) -> UsageSnapshot {
         "claude" => claude::fetch().await,
         "gemini" => gemini::fetch().await,
         "devin" => devin::fetch().await,
+        "minimax" => minimax::fetch().await,
         other => UsageSnapshot::error(other, other, &format!("Unknown provider '{other}'")),
     }
 }

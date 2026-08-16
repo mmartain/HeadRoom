@@ -3,6 +3,7 @@ import { codexPlugin } from "./codex";
 import { claudePlugin } from "./claude";
 import { geminiPlugin } from "./gemini";
 import { devinPlugin } from "./devin";
+import { minimaxPlugin } from "./minimax";
 import type { ProviderId, ProviderPlugin } from "./types";
 
 /**
@@ -16,6 +17,7 @@ const ALL_PLUGINS: ProviderPlugin[] = [
   claudePlugin,
   geminiPlugin,
   devinPlugin,
+  minimaxPlugin,
 ];
 
 export function listPlugins(): ProviderPlugin[] {
