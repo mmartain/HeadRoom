@@ -25,6 +25,10 @@ Built with [Tauri 2](https://tauri.app/) + React.
 - Modular **provider plugin** design (registry-only registration)
 - Single-instance portable EXE
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+
 ## Privacy
 
 All credentials stay on your machine under `%APPDATA%\headroom\`. HeadRoom only calls the same provider backends you already use. No HeadRoom cloud sync.
