@@ -68,6 +68,82 @@ fn set_last_resets(state: Value) -> Result<(), String> {
     credential_store::set_last_resets(state)
 }
 
+/// True if the app was installed via NSIS (has an uninstall registry key).
+#[tauri::command]
+fn is_installed() -> bool {
+    std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\com.headroom.app",
+            "/ve",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Download the portable exe for `version` and self-replace the running exe.
+/// Only called on the portable path; the installed path uses the updater plugin.
+#[tauri::command]
+async fn download_portable_update(app: AppHandle, version: String) -> Result<(), String> {
+    let url = format!(
+        "https://github.com/mmartain/HeadRoom/releases/download/v{}/HeadRoom.exe",
+        version
+    );
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Download failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Download error: {e}"))?;
+
+    let current = std::env::current_exe().map_err(|e| e.to_string())?;
+    let parent = current.parent().ok_or("No parent directory")?;
+
+    // Write the downloaded exe next to the current one.
+    let new_exe = parent.join("HeadRoom_new.exe");
+    std::fs::write(&new_exe, &bytes).map_err(|e| e.to_string())?;
+
+    // Spawn a detached batch script that waits for this process to exit,
+    // then renames HeadRoom_new.exe → HeadRoom.exe and relaunches.
+    let bat = std::env::temp_dir().join("headroom-update.bat");
+    let script = format!(
+        "@echo off\r\n:wait\r\ntimeout /t 2 /nobreak >nul\r\nmove /y \"{}\" \"{}\"\r\nif exist \"{}\" start \"\" \"{}\"\r\ndel \"%~f0\"",
+        new_exe.display(),
+        current.display(),
+        current.display(),
+        current.display()
+    );
+    std::fs::write(&bat, script).map_err(|e| e.to_string())?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd.exe")
+            .args(["/C", bat.to_str().unwrap()])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("sh")
+            .arg(bat)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Exit immediately so the batch script can replace the running exe.
+    app.exit(0);
+    // In case exit is delayed, fall back to a hard exit.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::process::exit(0);
+}
+
 #[tauri::command]
 fn show_flyout(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
@@ -676,6 +752,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             fetch_provider_usage,
             fetch_all_usage,
@@ -692,6 +773,8 @@ pub fn run() {
             get_overlay_visible,
             refresh_overlay_layout,
             update_tray_status,
+            is_installed,
+            download_portable_update,
         ])
         .setup(|app| {
             let show_i = MenuItem::with_id(app, "show", "Show usage", true, None::<&str>)?;

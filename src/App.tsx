@@ -7,6 +7,7 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { check as checkUpdate } from "@tauri-apps/plugin-updater";
 import { Flyout } from "./components/Flyout";
 import { Overlay } from "./components/Overlay";
 import { SettingsForm } from "./components/SettingsForm";
@@ -38,6 +39,7 @@ function mergePartial(payload: Record<string, unknown>): Partial<AppSettings> {
     pollIntervalSec: merged.pollIntervalSec,
     alertThresholds: merged.alertThresholds,
     notifyOnReset: merged.notifyOnReset,
+    checkUpdatesOnStart: merged.checkUpdatesOnStart,
   };
 }
 
@@ -66,6 +68,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [view, setView] = useState<View>("flyout");
+  const [updateAvailable, setUpdateAvailable] = useState<{ version: string } | null>(null);
   const alerts = useRef(new AlertTracker());
   const resets = useRef(new ResetTracker());
   const resetsSeeded = useRef(false);
@@ -176,6 +179,23 @@ export default function App() {
       if (!resetsSeeded.current) {
         resets.current.seed(await loadLastResets());
         resetsSeeded.current = true;
+      }
+      // Check for updates (silent on failure)
+      if (s.checkUpdatesOnStart) {
+        try {
+          const update = await checkUpdate();
+          if (update) {
+            setUpdateAvailable({ version: update.version });
+            if (await ensureNotifyPermission()) {
+              sendNotification({
+                title: "Update available",
+                body: `HeadRoom v${update.version} is available.`,
+              });
+            }
+          }
+        } catch {
+          // Offline — nothing to do
+        }
       }
       await refresh(s.enabled);
     })();
@@ -297,6 +317,17 @@ export default function App() {
     }
   }
 
+  async function installUpdate() {
+    if (!updateAvailable) return;
+    const installed = await invoke<boolean>("is_installed");
+    if (installed) {
+      const update = await checkUpdate();
+      if (update) await update.downloadAndInstall();
+    } else {
+      await invoke("download_portable_update", { version: updateAvailable.version });
+    }
+  }
+
   if (!settings) {
     return <div className="boot">Loading…</div>;
   }
@@ -337,6 +368,8 @@ export default function App() {
           onOpenSettings={() => setView("settings")}
           overlayVisible={settings.overlayVisible}
           onToggleOverlay={() => void toggleOverlay()}
+          updateAvailable={updateAvailable}
+          onInstallUpdate={() => void installUpdate()}
         />
       ) : (
         <SettingsForm
@@ -345,6 +378,14 @@ export default function App() {
           onOpacityLive={liveOpacity}
           onZoomLive={liveZoom}
           onClose={() => setView("flyout")}
+          updateAvailable={updateAvailable}
+          onInstallUpdate={() => void installUpdate()}
+          onCheckUpdate={async () => {
+            try {
+              const u = await checkUpdate();
+              setUpdateAvailable(u ? { version: u.version } : null);
+            } catch { /* offline */ }
+          }}
         />
       )}
     </div>

@@ -13,6 +13,8 @@ type Props = {
   onOpenSettings: () => void;
   overlayVisible: boolean;
   onToggleOverlay: () => void;
+  updateAvailable: { version: string } | null;
+  onInstallUpdate: () => void;
 };
 
 export function Flyout({
@@ -24,6 +26,8 @@ export function Flyout({
   onOpenSettings,
   overlayVisible,
   onToggleOverlay,
+  updateAvailable,
+  onInstallUpdate,
 }: Props) {
   const plugins = listEnabledPlugins(enabled);
   const ordered = plugins
@@ -59,6 +63,15 @@ export function Flyout({
           <span aria-hidden>─</span>
         </button>
       </header>
+
+      {updateAvailable && (
+        <div className="update-banner">
+          <span>HeadRoom v{updateAvailable.version} available</span>
+          <button type="button" onClick={onInstallUpdate}>
+            Install
+          </button>
+        </div>
+      )}
 
       <div className="flyout-body">
         {ordered.length === 0 && !loading && (

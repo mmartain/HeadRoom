@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -52,4 +52,34 @@ for (const dir of nsisDirs) {
     copyFileSync(from, to);
     console.log(`NSIS installer copied:\n  ${to}`);
   }
+  // Copy updater signatures
+  const sigs = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".exe.sig"));
+  for (const name of sigs) {
+    const from = join(dir, name);
+    const to = join(outDir, name);
+    copyFileSync(from, to);
+    console.log(`Signature copied:\n  ${to}`);
+  }
+}
+
+// Generate latest.json for the updater (NSIS only; portable uses custom download)
+const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const setupSig = readdirSync(outDir)
+  .find((f) => f.endsWith("x64-setup.exe.sig"));
+if (setupSig) {
+  const sig = readFileSync(join(outDir, setupSig), "utf8").trim();
+  const setupName = setupSig.replace(/\.sig$/, "");
+  const latest = {
+    version,
+    pub_date: new Date().toISOString(),
+    platforms: {
+      "windows-x86_64": {
+        signature: sig,
+        url: `https://github.com/mmartain/HeadRoom/releases/download/v${version}/${encodeURIComponent(setupName)}`,
+      },
+    },
+  };
+  const latestPath = join(outDir, "latest.json");
+  writeFileSync(latestPath, JSON.stringify(latest, null, 2));
+  console.log(`latest.json written:\n  ${latestPath}`);
 }

@@ -1,3 +1,4 @@
+use base64::Engine;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -50,8 +51,134 @@ fn write_json(path: &PathBuf, value: &Value) -> Result<(), String> {
     fs::write(path, raw).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// DPAPI helpers (Windows-only)
+// ---------------------------------------------------------------------------
+#[cfg(windows)]
+mod dpapi {
+    use windows::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    };
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+
+    pub fn encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+        let data_in = CRYPT_INTEGER_BLOB {
+            cbData: plaintext.len() as u32,
+            pbData: plaintext.as_ptr() as *mut u8,
+        };
+        let mut data_out = CRYPT_INTEGER_BLOB::default();
+        unsafe {
+            CryptProtectData(
+                &data_in,
+                None,
+                None,
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut data_out,
+            )
+            .map_err(|e| format!("DPAPI encrypt failed: {e}"))?;
+        }
+        let out = unsafe {
+            let bytes =
+                std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
+            let v = bytes.to_vec();
+            let _ = LocalFree(Some(HLOCAL(data_out.pbData as *mut std::ffi::c_void)));
+            v
+        };
+        Ok(out)
+    }
+
+    pub fn decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+        let data_in = CRYPT_INTEGER_BLOB {
+            cbData: ciphertext.len() as u32,
+            pbData: ciphertext.as_ptr() as *mut u8,
+        };
+        let mut data_out = CRYPT_INTEGER_BLOB::default();
+        unsafe {
+            CryptUnprotectData(
+                &data_in,
+                None,
+                None,
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut data_out,
+            )
+            .map_err(|e| format!("DPAPI decrypt failed: {e}"))?;
+        }
+        let out = unsafe {
+            let bytes =
+                std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
+            let v = bytes.to_vec();
+            let _ = LocalFree(Some(HLOCAL(data_out.pbData as *mut std::ffi::c_void)));
+            v
+        };
+        Ok(out)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn round_trip() {
+            let plain = b"hello secret world";
+            let enc = encrypt(plain).expect("encrypt");
+            let dec = decrypt(&enc).expect("decrypt");
+            assert_eq!(dec, plain);
+        }
+    }
+}
+
+fn read_secrets() -> Result<Value, String> {
+    let path = secrets_path()?;
+    if !path.exists() {
+        return Ok(json!({}));
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let value: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+
+    // Encrypted envelope: { "version": 1, "cipher": "dpapi", "data": "<b64>" }
+    if value.get("version").and_then(|v| v.as_u64()) == Some(1)
+        && value.get("data").and_then(|v| v.as_str()).is_some()
+    {
+        let b64 = value["data"].as_str().unwrap();
+        let ciphertext = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Base64 decode: {e}"))?;
+
+        #[cfg(windows)]
+        let plaintext = dpapi::decrypt(&ciphertext)?;
+        #[cfg(not(windows))]
+        let plaintext = ciphertext; // non-Windows stores plaintext
+
+        return serde_json::from_slice(&plaintext).map_err(|e| e.to_string());
+    }
+
+    // Old plaintext format — migrate to encrypted on next write
+    Ok(value)
+}
+
+fn write_secrets(value: &Value) -> Result<(), String> {
+    let path = secrets_path()?;
+    let plaintext = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+
+    #[cfg(windows)]
+    let ciphertext = dpapi::encrypt(&plaintext)?;
+    #[cfg(not(windows))]
+    let ciphertext = plaintext.clone();
+
+    let envelope = json!({
+        "version": 1,
+        "cipher": if cfg!(windows) { "dpapi" } else { "none" },
+        "data": base64::engine::general_purpose::STANDARD.encode(&ciphertext),
+    });
+    write_json(&path, &envelope)
+}
+
 pub fn get_secret(provider_id: &str, field_key: &str) -> Result<Option<String>, String> {
-    let data = read_json(&secrets_path()?)?;
+    let data = read_secrets()?;
     Ok(data
         .get(provider_id)
         .and_then(|p| p.get(field_key))
@@ -61,8 +188,7 @@ pub fn get_secret(provider_id: &str, field_key: &str) -> Result<Option<String>, 
 }
 
 pub fn set_secret(provider_id: &str, field_key: &str, value: &str) -> Result<(), String> {
-    let path = secrets_path()?;
-    let mut data = read_json(&path)?;
+    let mut data = read_secrets()?;
     if !data.is_object() {
         data = json!({});
     }
@@ -77,18 +203,17 @@ pub fn set_secret(provider_id: &str, field_key: &str, value: &str) -> Result<(),
         .as_object_mut()
         .unwrap()
         .insert(field_key.to_string(), json!(value));
-    write_json(&path, &data)
+    write_secrets(&data)
 }
 
 pub fn clear_secret(provider_id: &str, field_key: &str) -> Result<(), String> {
-    let path = secrets_path()?;
-    let mut data = read_json(&path)?;
+    let mut data = read_secrets()?;
     if let Some(obj) = data.as_object_mut() {
         if let Some(entry) = obj.get_mut(provider_id).and_then(|v| v.as_object_mut()) {
             entry.remove(field_key);
         }
     }
-    write_json(&path, &data)
+    write_secrets(&data)
 }
 
 pub fn get_settings() -> Result<Value, String> {

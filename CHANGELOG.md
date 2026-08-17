@@ -2,6 +2,19 @@
 
 All notable changes to HeadRoom are documented in this file.
 
+## [0.4.0] - 2026-08-16
+
+### Added
+
+- **Launch at startup** — opt-in toggle in Settings → Startup & updates; writes a registry Run key so HeadRoom starts with Windows.
+- **Auto-update** — checks GitHub Releases on startup (toggle, default ON). Installed builds download and install the signed NSIS update automatically; portable builds self-replace via a download-and-swap mechanism. New "Check for updates" button and status in Settings. Update-available banner in the flyout.
+- **Encrypted secrets** — provider credentials are now encrypted at rest with Windows DPAPI (current-user scope). Existing plaintext `secrets.json` is migrated transparently on first write. No frontend changes needed.
+
+### Changed
+
+- Settings restructured into sections: Startup & updates, Notifications (existing reset toggle), Credentials.
+- Release pipeline now signs the NSIS installer and publishes `latest.json` for the updater.
+
 ## [0.3.0] - 2026-08-16
 
 ### Added

@@ -73,6 +73,7 @@ jobs:
         run: npx tauri build
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Package release artifacts
         run: node scripts/package-artifacts.mjs
@@ -91,5 +92,7 @@ jobs:
           files: |
             portable/HeadRoom.exe
             portable/*-setup.exe
+            portable/*.sig
+            portable/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

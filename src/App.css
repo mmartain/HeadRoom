@@ -607,3 +607,47 @@ button.save-field {
   padding: 24px 8px;
   text-align: center;
 }
+
+/* Update banner in flyout */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(127, 217, 154, 0.1);
+  border-bottom: 1px solid rgba(127, 217, 154, 0.2);
+  font-size: 11px;
+  color: var(--ok);
+  flex-shrink: 0;
+}
+
+.update-banner button {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-color: var(--ok);
+  color: var(--ok);
+  background: transparent;
+}
+
+.update-banner button:hover {
+  background: rgba(127, 217, 154, 0.15);
+}
+
+/* Settings: update check row */
+.update-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.update-action button {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.update-status {
+  font-size: 11px;
+  line-height: 1.4;
+}

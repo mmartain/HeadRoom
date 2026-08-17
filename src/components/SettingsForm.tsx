@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { listPlugins } from "../providers/registry";
 import type { AuthCapability, AuthField, ProviderPlugin } from "../providers/types";
 import type { AppSettings } from "../store/snapshots";
@@ -10,6 +11,9 @@ type Props = {
   onOpacityLive: (opacity: number) => void;
   onZoomLive: (zoom: number) => void;
   onClose: () => void;
+  updateAvailable: { version: string } | null;
+  onInstallUpdate: () => void;
+  onCheckUpdate: () => void;
 };
 
 function collectSecretFields(auth: AuthCapability): AuthField[] {
@@ -103,8 +107,21 @@ export function SettingsForm({
   onOpacityLive,
   onZoomLive,
   onClose,
+  updateAvailable,
+  onInstallUpdate,
+  onCheckUpdate,
 }: Props) {
   const plugins = listPlugins();
+  const [autoStart, setAutoStart] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const on = await isEnabled();
+      if (!cancelled) setAutoStart(on);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="settings">
@@ -215,6 +232,48 @@ export function SettingsForm({
               onChange={(e) => onChange({ ...settings, notifyOnReset: e.target.checked })}
             />
           </label>
+        </section>
+
+        <section className="settings-block">
+          <h3>Startup &amp; updates</h3>
+          <label className="toggle-row">
+            <span>Launch at startup</span>
+            <input
+              type="checkbox"
+              checked={autoStart}
+              onChange={async (e) => {
+                const on = e.target.checked;
+                if (on) await enable();
+                else await disable();
+                setAutoStart(on);
+              }}
+            />
+          </label>
+          <label className="toggle-row">
+            <span>Check for updates on startup</span>
+            <input
+              type="checkbox"
+              checked={settings.checkUpdatesOnStart}
+              onChange={(e) =>
+                onChange({ ...settings, checkUpdatesOnStart: e.target.checked })
+              }
+            />
+          </label>
+          <div className="update-action">
+            <button type="button" onClick={onCheckUpdate}>
+              Check for updates
+            </button>
+            {updateAvailable ? (
+              <span className="update-status">
+                v{updateAvailable.version} available —{" "}
+                <button type="button" className="linkish" onClick={onInstallUpdate}>
+                  Install
+                </button>
+              </span>
+            ) : (
+              <span className="update-status muted">Up to date</span>
+            )}
+          </div>
         </section>
 
         <section className="settings-block">

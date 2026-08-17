@@ -15,6 +15,8 @@ export type AppSettings = {
   pollIntervalSec: number;
   /** Notify when a provider's usage window rolls over (limits reset). */
   notifyOnReset: boolean;
+  /** Check for updates on startup. */
+  checkUpdatesOnStart: boolean;
 };
 
 export function mergeSettings(raw: Record<string, unknown> | null | undefined): AppSettings {
@@ -47,6 +49,7 @@ export function mergeSettings(raw: Record<string, unknown> | null | undefined): 
         ? raw.pollIntervalSec
         : 120,
     notifyOnReset: raw?.notifyOnReset !== false,
+    checkUpdatesOnStart: raw?.checkUpdatesOnStart !== false,
   };
 }
 
