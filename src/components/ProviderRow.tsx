@@ -17,13 +17,14 @@ function formatReset(resetsAt: string | null): string | null {
   return `${mins}m`;
 }
 
-/** Keep the flyout compact: at most three usage windows per provider. */
+/** Keep the flyout compact: up to 3 rate-limit windows + budget windows always visible. */
 function pickWindows(windows: UsageWindow[]): UsageWindow[] {
   const withPct = windows.filter((w) => w.usedPercent != null);
-  const without = windows.filter((w) => w.usedPercent == null);
-  const picked = [...withPct.slice(0, 3)];
-  if (picked.length < 3 && without[0]) picked.push(without[0]);
-  return picked.slice(0, 3);
+  const budgets = windows.filter((w) => w.usedPercent == null && w.remainingLabel != null);
+  const other = windows.filter((w) => w.usedPercent == null && w.remainingLabel == null);
+  const picked = [...withPct.slice(0, 3), ...budgets.slice(0, 2)];
+  if (picked.length === 0 && other[0]) picked.push(other[0]);
+  return picked;
 }
 
 function WindowBar({

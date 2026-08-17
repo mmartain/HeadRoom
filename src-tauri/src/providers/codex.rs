@@ -197,12 +197,8 @@ fn parse_wham_usage(body: &Value) -> UsageSnapshot {
         }
     }
 
-    // Credits balance may be a string
+    // Credits / token budget (may be a string or number)
     if let Some(credits_node) = body.get("credits") {
-        let has = credits_node
-            .get("has_credits")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
         let unlimited = credits_node
             .get("unlimited")
             .and_then(|v| v.as_bool())
@@ -212,6 +208,16 @@ fn parse_wham_usage(body: &Value) -> UsageSnapshot {
                 .or_else(|| v.as_i64().map(|n| n as f64))
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
+        let total = credits_node
+            .get("total")
+            .or_else(|| credits_node.get("limit"))
+            .or_else(|| credits_node.get("max"))
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_i64().map(|n| n as f64))
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            });
+
         if unlimited {
             windows.push(UsageWindow {
                 id: "credits".into(),
@@ -220,16 +226,16 @@ fn parse_wham_usage(body: &Value) -> UsageSnapshot {
                 remaining_label: Some("Unlimited".into()),
                 resets_at: None,
             });
-        } else if has {
-            if let Some(credits) = balance {
-                windows.push(UsageWindow {
-                    id: "credits".into(),
-                    label: "Credits".into(),
-                    used_percent: None,
-                    remaining_label: Some(format!("{credits:.0} credits")),
-                    resets_at: None,
-                });
-            }
+        } else if let Some(bal) = balance {
+            let used = total.map(|t| ((t - bal).max(0.0) / t.max(1.0)) * 100.0);
+            let remaining = total.map(|_| format!("{bal:.0} / {:.0} credits", total.unwrap()));
+            windows.push(UsageWindow {
+                id: "credits".into(),
+                label: "Credits".into(),
+                used_percent: used,
+                remaining_label: remaining.or(Some(format!("{bal:.0} credits"))),
+                resets_at: None,
+            });
         }
     }
 
