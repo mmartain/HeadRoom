@@ -15,6 +15,9 @@ const viteCacheDir = join(localAppData, "headroom-vite");
 export default defineConfig(async () => ({
   plugins: [react()],
   cacheDir: viteCacheDir,
+  define: {
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString().split("T")[0]),
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { listPlugins } from "../providers/registry";
 import type { AuthCapability, AuthField, ProviderPlugin } from "../providers/types";
@@ -113,6 +114,7 @@ export function SettingsForm({
 }: Props) {
   const plugins = listPlugins();
   const [autoStart, setAutoStart] = useState(false);
+  const [version, setVersion] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -123,10 +125,24 @@ export function SettingsForm({
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const v = await getVersion();
+      if (!cancelled) setVersion(v);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="settings">
       <header className="settings-header">
-        <h2>Settings</h2>
+        <div>
+          <h2>Settings</h2>
+          {version && (
+            <span className="sub">v{version} &mdash; built {__BUILD_DATE__}</span>
+          )}
+        </div>
         <button type="button" className="linkish" onClick={onClose}>
           Back
         </button>
