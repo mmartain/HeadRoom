@@ -609,6 +609,18 @@ fn cursor_screen_pos() -> Option<(i32, i32)> {
     None
 }
 
+/// Hold Shift to keep the top bar visible while “hide near mouse” is on (so you can drag it).
+#[cfg(windows)]
+fn shift_key_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
+    unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000 != 0 }
+}
+
+#[cfg(not(windows))]
+fn shift_key_held() -> bool {
+    false
+}
+
 fn overlay_user_wants_visible() -> bool {
     credential_store::get_settings()
         .ok()
@@ -714,6 +726,14 @@ fn start_overlay_mouse_dodge(app: AppHandle) {
             if !overlay_hide_near_mouse_enabled() {
                 if ducked {
                     // Setting turned off while ducked — restore without re-centering
+                    show_overlay_at_home(&app);
+                    ducked = false;
+                }
+                continue;
+            }
+            // Shift temporarily disables ducking so the bar stays grabable / draggable.
+            if shift_key_held() {
+                if ducked {
                     show_overlay_at_home(&app);
                     ducked = false;
                 }

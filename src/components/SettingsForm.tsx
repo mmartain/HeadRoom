@@ -214,8 +214,8 @@ export function SettingsForm({
           </label>
           <p className="muted detect-label">
             When “Hide when mouse is near” is on, the bar ducks away so you can click
-            title bars and tabs underneath. Tray: “Toggle top status bar”. Zoom 100% is
-            the default size.
+            title bars and tabs underneath. Hold Shift to keep it visible and drag it.
+            Tray: “Toggle top status bar”. Zoom 100% is the default size.
           </p>
         </section>
 
