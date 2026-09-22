@@ -82,7 +82,6 @@ fn window_from_rate_limit(id: &str, label: &str, node: &Value) -> Option<UsageWi
     let resets_at = node
         .get("reset_at")
         .or_else(|| node.get("resetAt"))
-        .or_else(|| node.get("reset_after"))
         .and_then(|v| {
             if let Some(s) = v.as_str() {
                 Some(s.to_string())
@@ -93,6 +92,14 @@ fn window_from_rate_limit(id: &str, label: &str, node: &Value) -> Option<UsageWi
             } else {
                 None
             }
+        })
+        .or_else(|| {
+            // Relative seconds until reset (not a unix timestamp).
+            node.get("reset_after_seconds")
+                .or_else(|| node.get("resetAfterSeconds"))
+                .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|n| n as i64)))
+                .filter(|&secs| secs > 0)
+                .map(|secs| (chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339())
         });
 
     Some(UsageWindow {
@@ -197,10 +204,14 @@ fn parse_wham_usage(body: &Value) -> UsageSnapshot {
         }
     }
 
-    // Credits / token budget (may be a string or number)
+    // Credits / token budget (balance only — API has no credit total/reset).
     if let Some(credits_node) = body.get("credits") {
         let unlimited = credits_node
             .get("unlimited")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let has_credits = credits_node
+            .get("has_credits")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let balance = credits_node.get("balance").and_then(|v| {
@@ -208,15 +219,6 @@ fn parse_wham_usage(body: &Value) -> UsageSnapshot {
                 .or_else(|| v.as_i64().map(|n| n as f64))
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
-        let total = credits_node
-            .get("total")
-            .or_else(|| credits_node.get("limit"))
-            .or_else(|| credits_node.get("max"))
-            .and_then(|v| {
-                v.as_f64()
-                    .or_else(|| v.as_i64().map(|n| n as f64))
-                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-            });
 
         if unlimited {
             windows.push(UsageWindow {
@@ -227,15 +229,18 @@ fn parse_wham_usage(body: &Value) -> UsageSnapshot {
                 resets_at: None,
             });
         } else if let Some(bal) = balance {
-            let used = total.map(|t| ((t - bal).max(0.0) / t.max(1.0)) * 100.0);
-            let remaining = total.map(|_| format!("{bal:.0} / {:.0} credits", total.unwrap()));
-            windows.push(UsageWindow {
-                id: "credits".into(),
-                label: "Credits".into(),
-                used_percent: used,
-                remaining_label: remaining.or(Some(format!("{bal:.0} credits"))),
-                resets_at: None,
-            });
+            // Only surface when credits are actually loaded (API often returns balance "0").
+            if has_credits || bal > 0.0 {
+                let left = bal.floor().max(0.0);
+                windows.push(UsageWindow {
+                    id: "credits".into(),
+                    label: "Credits".into(),
+                    // Keep null so UI shows a credit count, not a percentage bar.
+                    used_percent: None,
+                    remaining_label: Some(format!("{left:.0} credits left")),
+                    resets_at: None,
+                });
+            }
         }
     }
 

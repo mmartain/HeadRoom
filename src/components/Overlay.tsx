@@ -6,6 +6,7 @@ import { Menu } from "@tauri-apps/api/menu";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { beginWindowDrag } from "../lib/windowDrag";
 import { windowBarColor } from "../lib/windowColors";
+import { formatReset } from "../lib/formatReset";
 
 type Props = {
   snapshots: UsageSnapshot[];
@@ -15,12 +16,36 @@ type Props = {
 
 const MAX_OVERLAY_BARS = 3;
 
-/** Prefer windows that have a used% so bars always show useful fills. */
+function isCreditsWindow(window: UsageWindow): boolean {
+  return window.id === "credits";
+}
+
+/** Rate-limit % meters plus a credits count meter when present. */
 function meterWindows(snap: UsageSnapshot | undefined): UsageWindow[] {
   if (!snap || snap.status !== "ok") return [];
-  return snap.windows
-    .filter((w) => w.usedPercent != null)
-    .slice(0, MAX_OVERLAY_BARS);
+  const credits = snap.windows.filter(isCreditsWindow);
+  const rates = snap.windows.filter(
+    (w) => w.usedPercent != null && !isCreditsWindow(w),
+  );
+  const creditSlots = Math.min(1, credits.length);
+  const rateSlots = Math.max(0, MAX_OVERLAY_BARS - creditSlots);
+  return [...rates.slice(0, rateSlots), ...credits.slice(0, creditSlots)];
+}
+
+function creditsCountLabel(window: UsageWindow): string {
+  const raw = window.remainingLabel ?? "";
+  if (/unlimited/i.test(raw)) return "∞";
+  const m = raw.match(/-?[\d,]+(?:\.\d+)?/);
+  if (!m) return shorten(raw || "—");
+  const n = Math.floor(Number(m[0].replace(/,/g, "")));
+  return Number.isFinite(n) ? String(n) : shorten(raw);
+}
+
+function meterLabel(window: UsageWindow): string {
+  if (isCreditsWindow(window) || window.usedPercent == null) {
+    return creditsCountLabel(window);
+  }
+  return `${Math.max(0, 100 - window.usedPercent).toFixed(0)}%`;
 }
 
 function meterTooltip(window: UsageWindow): string {
@@ -28,7 +53,10 @@ function meterTooltip(window: UsageWindow): string {
   const detail =
     window.remainingLabel ??
     (used != null ? `${Math.max(0, 100 - used).toFixed(0)}% left` : "—");
-  return `${window.label}: ${detail}`;
+  const reset = formatReset(window.resetsAt);
+  return reset
+    ? `${window.label}: ${detail} · ${reset}`
+    : `${window.label}: ${detail}`;
 }
 
 function primaryRemaining(snap: UsageSnapshot | undefined): {
@@ -46,19 +74,16 @@ function primaryRemaining(snap: UsageSnapshot | undefined): {
   if (snap.status === "disabled") return { text: "—", meters: [] };
 
   const meters = meterWindows(snap);
-  const primary =
-    meters[0] ??
-    snap.windows.find((w) => w.usedPercent != null) ??
-    snap.windows[0] ??
-    null;
-
-  if (!primary) return { text: "—", meters: [] };
-  if (primary.usedPercent != null) {
+  if (meters.length > 0) {
+    const primary = meters[0];
     return {
-      text: `${Math.max(0, 100 - primary.usedPercent).toFixed(0)}%`,
+      text: meterLabel(primary),
       meters,
     };
   }
+
+  const primary = snap.windows[0] ?? null;
+  if (!primary) return { text: "—", meters: [] };
   return {
     text: shorten(primary.remainingLabel ?? "—"),
     meters: [],
@@ -190,12 +215,12 @@ export function Overlay({ snapshots, enabled, opacity }: Props) {
             <div className="status-meters">
               {(showInlinePct ? meters : [null]).map((window, i) => {
                 const used = window?.usedPercent ?? null;
-                const remaining =
-                  used != null ? Math.max(0, 100 - used) : null;
+                const label = window ? meterLabel(window) : null;
+                const onFill = used != null && used >= 50;
                 return (
                   <div
                     key={window?.id ?? i}
-                    className="status-meter"
+                    className={`status-meter${window && isCreditsWindow(window) ? " is-credits" : ""}`}
                     data-no-drag
                     title={window ? meterTooltip(window) : undefined}
                   >
@@ -205,18 +230,26 @@ export function Overlay({ snapshots, enabled, opacity }: Props) {
                         width:
                           used != null
                             ? `${Math.min(100, Math.max(0, used))}%`
-                            : "0%",
+                            : window && isCreditsWindow(window)
+                              ? "100%"
+                              : "0%",
                         background: windowBarColor(i, accent),
-                        opacity: ok ? 1 : 0.35,
+                        opacity: ok
+                          ? window && isCreditsWindow(window) && used == null
+                            ? 0.45
+                            : 1
+                          : 0.35,
                       }}
                     />
-                    {remaining != null && (
+                    {label != null && (
                       <span
                         className={`status-meter-label mono ${
-                          used != null && used >= 50 ? "is-on-fill" : "is-on-track"
+                          onFill || (window && isCreditsWindow(window) && used == null)
+                            ? "is-on-fill"
+                            : "is-on-track"
                         }`}
                       >
-                        {remaining.toFixed(0)}%
+                        {label}
                       </span>
                     )}
                   </div>

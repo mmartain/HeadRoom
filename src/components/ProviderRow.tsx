@@ -1,28 +1,26 @@
 import type { UsageSnapshot, UsageWindow } from "../providers/types";
 import { windowBarColor } from "../lib/windowColors";
+import { formatReset } from "../lib/formatReset";
 
-function formatReset(resetsAt: string | null): string | null {
-  if (!resetsAt) return null;
-  const d = new Date(resetsAt);
-  if (Number.isNaN(d.getTime())) return resetsAt;
-  const now = Date.now();
-  const diffMs = d.getTime() - now;
-  if (diffMs <= 0) return null;
-  const hours = Math.floor(diffMs / 3_600_000);
-  const mins = Math.floor((diffMs % 3_600_000) / 60_000);
-  if (hours >= 48) {
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  }
-  if (hours >= 1) return `${hours}h ${mins}m`;
-  return `${mins}m`;
-}
-
-/** Keep the flyout compact: up to 3 rate-limit windows + budget windows always visible. */
+/** Keep the flyout compact: up to 3 rate-limit windows + credits/budget always visible. */
 function pickWindows(windows: UsageWindow[]): UsageWindow[] {
-  const withPct = windows.filter((w) => w.usedPercent != null);
-  const budgets = windows.filter((w) => w.usedPercent == null && w.remainingLabel != null);
-  const other = windows.filter((w) => w.usedPercent == null && w.remainingLabel == null);
-  const picked = [...withPct.slice(0, 3), ...budgets.slice(0, 2)];
+  const credits = windows.filter((w) => w.id === "credits");
+  const withPct = windows.filter(
+    (w) => w.usedPercent != null && w.id !== "credits",
+  );
+  const budgets = windows.filter(
+    (w) =>
+      w.id !== "credits" && w.usedPercent == null && w.remainingLabel != null,
+  );
+  const other = windows.filter(
+    (w) =>
+      w.id !== "credits" && w.usedPercent == null && w.remainingLabel == null,
+  );
+  const picked = [
+    ...withPct.slice(0, 3),
+    ...credits.slice(0, 1),
+    ...budgets.slice(0, 2),
+  ];
   if (picked.length === 0 && other[0]) picked.push(other[0]);
   return picked;
 }
@@ -35,6 +33,10 @@ function WindowBar({
   color: string;
 }) {
   const used = window.usedPercent;
+  const reset = formatReset(window.resetsAt);
+  const remaining =
+    window.remainingLabel ??
+    (used != null ? `${Math.max(0, 100 - used).toFixed(0)}% left` : "—");
   return (
     <div className="window-row">
       <div className="window-meta">
@@ -43,8 +45,8 @@ function WindowBar({
           {window.label}
         </span>
         <span className="window-remaining">
-          {window.remainingLabel ??
-            (used != null ? `${Math.max(0, 100 - used).toFixed(0)}% left` : "—")}
+          {remaining}
+          {reset && <span className="window-reset"> · {reset}</span>}
         </span>
       </div>
       {used != null && (
