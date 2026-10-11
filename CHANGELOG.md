@@ -2,6 +2,12 @@
 
 All notable changes to HeadRoom are documented in this file.
 
+## [0.4.6] - 2026-10-11
+
+### Changed
+
+- Restore the missing changelog entries for v0.4.1 through v0.4.4, correct the v0.4.0 release date, and link each version to its GitHub release.
+
 ## [0.4.5] - 2026-10-11
 
 ### Fixed
@@ -100,6 +106,7 @@ All notable changes to HeadRoom are documented in this file.
 - Threshold toasts at 80% / 95% used.
 - Modular provider plugin design; single-instance portable EXE.
 
+[0.4.6]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.6
 [0.4.5]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.5
 [0.4.4]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.4
 [0.4.3]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.3
