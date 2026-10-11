@@ -1,24 +1,23 @@
 mod credential_store;
 mod fs_util;
+mod overlay_geometry;
 mod providers;
 
 use providers::types::UsageSnapshot;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Monitor, RunEvent, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
 };
 
 /// Last known "home" position of the top bar (physical pixels). Used while ducked.
 static OVERLAY_HOME_PHYSICAL: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 /// Pending drag position to flush into settings (physical pixels).
 static OVERLAY_PENDING_PHYSICAL: Mutex<Option<(i32, i32)>> = Mutex::new(None);
-/// Skip persisting programmatic moves (layout apply).
-static OVERLAY_SKIP_MOVE_SAVE: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 async fn fetch_provider_usage(provider_id: String) -> UsageSnapshot {
@@ -168,12 +167,12 @@ fn set_overlay_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     ensure_overlay(&app)?;
     if let Some(win) = app.get_webview_window("overlay") {
         if visible {
-            apply_overlay_layout(&app);
+            apply_overlay_layout(&app)?;
             let _ = win.set_always_on_top(true);
-            let _ = win.show();
+            win.unminimize().map_err(|e| e.to_string())?;
+            win.show().map_err(|e| e.to_string())?;
         } else {
             persist_overlay_position_from_window(&app);
-            capture_overlay_home(&app);
             let _ = win.hide();
         }
     }
@@ -249,6 +248,8 @@ fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
         .title("Usage Overlay")
         .inner_size(713.0 * overlay_zoom_factor(), 40.0 * overlay_zoom_factor())
         .decorations(false)
+        // Windows shadows add an invisible frame outside the requested size.
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
@@ -257,138 +258,134 @@ fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     attach_overlay_move_listener(&win);
-    apply_overlay_layout(app);
+    apply_overlay_layout(app)?;
     Ok(())
 }
 
-fn overlay_saved_logical() -> Option<(f64, f64)> {
-    let settings = credential_store::get_settings().ok()?;
-    let x = settings.get("overlayX")?.as_f64()?;
-    let y = settings.get("overlayY")?.as_f64()?;
-    if !x.is_finite() || !y.is_finite() {
-        return None;
-    }
-    Some((x, y))
-}
-
-fn persist_overlay_logical(x: f64, y: f64) {
-    let mut settings = credential_store::get_settings().unwrap_or_else(|_| json!({}));
-    if !settings.is_object() {
-        settings = json!({});
-    }
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("overlayX".into(), json!(x));
-        obj.insert("overlayY".into(), json!(y));
-        let _ = credential_store::set_settings(settings);
-    }
-}
-
-fn monitor_logical_bounds(monitor: &Monitor) -> Option<(f64, f64, f64, f64)> {
-    let scale = monitor.scale_factor();
-    if scale <= 0.0 {
-        return None;
-    }
-    let size = monitor.size();
-    let position = monitor.position();
-    let origin_x = position.x as f64 / scale;
-    let origin_y = position.y as f64 / scale;
-    let screen_w = size.width as f64 / scale;
-    let screen_h = size.height as f64 / scale;
-    if screen_w <= 1.0 || screen_h <= 1.0 {
-        return None;
-    }
-    Some((origin_x, origin_y, screen_w, screen_h))
-}
-
-/// Prefer the monitor that contains the point; otherwise primary / first available.
-fn monitor_for_logical_point(app: &AppHandle, x: f64, y: f64) -> Option<Monitor> {
+fn overlay_displays(app: &AppHandle) -> (Vec<overlay_geometry::Display>, usize) {
     let monitors = app.available_monitors().ok().unwrap_or_default();
-    for monitor in &monitors {
-        if let Some((ox, oy, w, h)) = monitor_logical_bounds(monitor) {
-            if x >= ox && x < ox + w && y >= oy && y < oy + h {
-                return Some(monitor.clone());
+    let primary = app.primary_monitor().ok().flatten();
+    let primary_index = primary
+        .and_then(|p| monitors.iter().position(|m| m.position() == p.position()))
+        .unwrap_or(0);
+    let displays = monitors
+        .iter()
+        .map(|monitor| {
+            let work = monitor.work_area();
+            overlay_geometry::Display {
+                bounds: overlay_geometry::Rect {
+                    x: monitor.position().x,
+                    y: monitor.position().y,
+                    width: monitor.size().width,
+                    height: monitor.size().height,
+                },
+                work: overlay_geometry::Rect {
+                    x: work.position.x,
+                    y: work.position.y,
+                    width: work.size.width,
+                    height: work.size.height,
+                },
+                scale: monitor.scale_factor(),
             }
-        }
+        })
+        .collect();
+    (displays, primary_index)
+}
+
+fn overlay_saved_physical(displays: &[overlay_geometry::Display]) -> Option<(f64, f64)> {
+    let settings = credential_store::get_settings().ok()?;
+    if let Some(point) = settings
+        .get("overlayPhysicalX")
+        .and_then(Value::as_f64)
+        .zip(settings.get("overlayPhysicalY").and_then(Value::as_f64))
+    {
+        return Some(point);
     }
-    app.primary_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| monitors.into_iter().next())
+    overlay_geometry::legacy_position(
+        displays,
+        settings.get("overlayX")?.as_f64()?,
+        settings.get("overlayY")?.as_f64()?,
+    )
 }
 
-fn clamp_into_monitor(
-    monitor: &Monitor,
-    x: f64,
-    y: f64,
-    bar_w: f64,
-    bar_h: f64,
-) -> Option<(f64, f64)> {
-    let (origin_x, origin_y, screen_w, screen_h) = monitor_logical_bounds(monitor)?;
-    let margin = 4.0;
-    let max_x = (origin_x + screen_w - bar_w - margin).max(origin_x + margin);
-    let max_y = (origin_y + screen_h - bar_h - margin).max(origin_y + margin);
-    Some((
-        x.clamp(origin_x + margin, max_x),
-        y.clamp(origin_y + margin, max_y),
-    ))
+fn persist_overlay_physical(x: i32, y: i32, scale: f64) {
+    // Retain the old keys for compatibility with earlier releases.
+    let _ = credential_store::set_settings(json!({
+        "overlayPhysicalX": x,
+        "overlayPhysicalY": y,
+        "overlayX": x as f64 / scale,
+        "overlayY": y as f64 / scale,
+    }));
 }
 
-/// Keep the overlay fully inside a real monitor. If the saved spot is on a
-/// disconnected display, fall back to the provided default (usually top-center).
-fn clamp_overlay_logical(
-    app: &AppHandle,
-    x: f64,
-    y: f64,
-    bar_w: f64,
-    bar_h: f64,
-    default_x: f64,
-    default_y: f64,
-) -> (f64, f64) {
-    let monitors = app.available_monitors().ok().unwrap_or_default();
-    let on_a_monitor = monitors.iter().any(|m| {
-        monitor_logical_bounds(m)
-            .map(|(ox, oy, w, h)| x >= ox && x < ox + w && y >= oy && y < oy + h)
-            .unwrap_or(false)
-    });
-
-    let (use_x, use_y) = if on_a_monitor {
-        (x, y)
-    } else {
-        (default_x, default_y)
-    };
-
-    if let Some(monitor) = monitor_for_logical_point(app, use_x, use_y) {
-        if let Some(clamped) = clamp_into_monitor(&monitor, use_x, use_y, bar_w, bar_h) {
-            return clamped;
-        }
+fn place_overlay(app: &AppHandle, position: Option<(f64, f64)>) -> Result<(), String> {
+    let win = app
+        .get_webview_window("overlay")
+        .ok_or("Overlay window missing")?;
+    let (displays, primary) = overlay_displays(app);
+    let placement = overlay_geometry::place(
+        &displays,
+        primary,
+        position,
+        enabled_provider_count(),
+        overlay_zoom_factor(),
+    )
+    .ok_or("No usable display for the overlay")?;
+    let size = tauri::PhysicalSize::new(placement.width, placement.height);
+    let position = tauri::PhysicalPosition::new(placement.x, placement.y);
+    if win.inner_size().ok() != Some(size) {
+        win.set_size(size).map_err(|e| e.to_string())?;
     }
-    (default_x, default_y)
+    if win.outer_position().ok() != Some(position) {
+        win.set_position(position).map_err(|e| e.to_string())?;
+    }
+    if let Ok(mut home) = OVERLAY_HOME_PHYSICAL.lock() {
+        *home = Some((placement.x, placement.y));
+    }
+    persist_overlay_physical(placement.x, placement.y, placement.scale);
+    Ok(())
 }
 
-fn capture_overlay_home(app: &AppHandle) {
+/// Recheck the live rectangle after a drag, DPI change, or display disconnect.
+fn keep_overlay_on_screen(app: &AppHandle) {
+    if left_mouse_button_held() {
+        return;
+    }
     let Some(win) = app.get_webview_window("overlay") else {
         return;
     };
-    if let Ok(pos) = win.outer_position() {
-        if let Ok(mut home) = OVERLAY_HOME_PHYSICAL.lock() {
-            *home = Some((pos.x, pos.y));
+    let Ok(position) = win.outer_position() else {
+        return;
+    };
+    let (displays, primary) = overlay_displays(app);
+    let point = Some((position.x as f64, position.y as f64));
+    let Some(p) = overlay_geometry::place(
+        &displays,
+        primary,
+        point,
+        enabled_provider_count(),
+        overlay_zoom_factor(),
+    ) else {
+        return;
+    };
+    if position != tauri::PhysicalPosition::new(p.x, p.y)
+        || win.inner_size().ok() != Some(tauri::PhysicalSize::new(p.width, p.height))
+    {
+        if let Err(error) = place_overlay(app, point) {
+            eprintln!("Could not recover overlay position: {error}");
         }
     }
 }
 
 fn persist_overlay_position_from_window(app: &AppHandle) {
-    flush_overlay_position_save(app);
     let Some(win) = app.get_webview_window("overlay") else {
         return;
     };
     let Ok(pos) = win.outer_position() else {
         return;
     };
-    let scale = win.scale_factor().unwrap_or(1.0);
-    if scale <= 0.0 {
-        return;
-    }
-    persist_overlay_logical(pos.x as f64 / scale, pos.y as f64 / scale);
+    // Persist a validated placement, including on exit or explicit hiding.
+    let _ = place_overlay(app, Some((pos.x as f64, pos.y as f64)));
 }
 
 fn enabled_provider_count() -> usize {
@@ -413,55 +410,10 @@ fn overlay_zoom_factor() -> f64 {
         / 100.0
 }
 
-fn default_overlay_logical(win: &WebviewWindow) -> (f64, f64, f64, f64) {
-    let monitor = win
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| win.current_monitor().ok().flatten());
-    let zoom = overlay_zoom_factor();
-    let bar_h = 40.0 * zoom;
-    let Some(monitor) = monitor else {
-        return (598.0 * zoom, bar_h, 24.0, 8.0);
-    };
-    let size = monitor.size();
-    let position = monitor.position();
-    let scale = monitor.scale_factor();
-    let screen_w = size.width as f64 / scale;
-    let origin_x = position.x as f64 / scale;
-    let origin_y = position.y as f64 / scale;
-    let n = enabled_provider_count() as f64;
-    // Prefer ~230px per enabled provider (~15% wider than the old 200px),
-    // never wider than the screen, and at least 414px unless the display is narrower.
-    let available = (screen_w - 24.0).max(1.0);
-    let preferred = 230.0 * n * zoom;
-    let min_w = (414.0 * zoom).min(available);
-    let bar_w = preferred.clamp(min_w, available);
-    let x = origin_x + (screen_w - bar_w) / 2.0;
-    let y = origin_y + 8.0;
-    (bar_w, bar_h, x, y)
-}
-
-/// Apply size + saved (or default) position. Used on create / show — not on mouse unduck.
-fn apply_overlay_layout(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("overlay") else {
-        return;
-    };
-    let (bar_w, bar_h, default_x, default_y) = default_overlay_logical(&win);
-    let (raw_x, raw_y) = overlay_saved_logical().unwrap_or((default_x, default_y));
-    let (x, y) = clamp_overlay_logical(app, raw_x, raw_y, bar_w, bar_h, default_x, default_y);
-    // Always persist the on-screen placement so restarts reopen in a visible spot.
-    persist_overlay_logical(x, y);
-
-    OVERLAY_SKIP_MOVE_SAVE.store(true, Ordering::SeqCst);
-    let _ = win.set_size(tauri::LogicalSize::new(bar_w, bar_h));
-    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-    capture_overlay_home(app);
-    // Allow move events again after Windows finishes the programmatic move.
-    std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        OVERLAY_SKIP_MOVE_SAVE.store(false, Ordering::SeqCst);
-    });
+/// Apply saved (or default) placement using physical desktop coordinates.
+fn apply_overlay_layout(app: &AppHandle) -> Result<(), String> {
+    let (displays, _) = overlay_displays(app);
+    place_overlay(app, overlay_saved_physical(&displays))
 }
 
 fn restore_overlay_on_startup(app: &AppHandle) {
@@ -469,7 +421,10 @@ fn restore_overlay_on_startup(app: &AppHandle) {
         return;
     }
     let _ = ensure_overlay(app);
-    apply_overlay_layout(app);
+    if let Err(error) = apply_overlay_layout(app) {
+        eprintln!("Could not restore overlay position: {error}");
+        return;
+    }
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.set_always_on_top(true);
         let _ = win.show();
@@ -498,7 +453,7 @@ fn refresh_overlay_layout(app: AppHandle, zoom: Option<f64>) -> Result<(), Strin
         .get_webview_window("overlay")
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(false);
-    apply_overlay_layout(&app);
+    apply_overlay_layout(&app)?;
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.set_always_on_top(true);
         if was_visible {
@@ -510,9 +465,6 @@ fn refresh_overlay_layout(app: AppHandle, zoom: Option<f64>) -> Result<(), Strin
 
 fn attach_overlay_move_listener(win: &WebviewWindow) {
     win.on_window_event(|event| {
-        if OVERLAY_SKIP_MOVE_SAVE.load(Ordering::SeqCst) {
-            return;
-        }
         if let WindowEvent::Moved(pos) = event {
             if let Ok(mut home) = OVERLAY_HOME_PHYSICAL.lock() {
                 *home = Some((pos.x, pos.y));
@@ -525,23 +477,17 @@ fn attach_overlay_move_listener(win: &WebviewWindow) {
 }
 
 fn flush_overlay_position_save(app: &AppHandle) {
-    let pending = {
-        let Ok(mut guard) = OVERLAY_PENDING_PHYSICAL.lock() else {
-            return;
-        };
-        guard.take()
-    };
-    let Some((px, py)) = pending else {
-        return;
-    };
-    let Some(win) = app.get_webview_window("overlay") else {
-        return;
-    };
-    let scale = win.scale_factor().unwrap_or(1.0);
-    if scale <= 0.0 {
+    // Let native dragging cross monitor boundaries; validate as soon as it ends.
+    if left_mouse_button_held() {
         return;
     }
-    persist_overlay_logical(px as f64 / scale, py as f64 / scale);
+    let pending = OVERLAY_PENDING_PHYSICAL
+        .lock()
+        .ok()
+        .and_then(|mut p| p.take());
+    if pending.is_some() {
+        persist_overlay_position_from_window(app);
+    }
 }
 
 /// Last fitted flyout height (logical px). 0 = use estimate from provider count.
@@ -663,64 +609,52 @@ fn cursor_near_overlay(app: &AppHandle) -> bool {
 }
 
 fn show_overlay_at_home(app: &AppHandle) {
-    let _ = ensure_overlay(app);
-    let Some(win) = app.get_webview_window("overlay") else {
+    if ensure_overlay(app).is_err() {
         return;
-    };
-
-    let home = OVERLAY_HOME_PHYSICAL.lock().ok().and_then(|g| *g);
-    if let Some((px, py)) = home {
-        let (bar_w, bar_h, default_x, default_y) = default_overlay_logical(&win);
-        let scale = win.scale_factor().unwrap_or(1.0).max(0.0001);
-        let (x, y) = clamp_overlay_logical(
-            app,
-            px as f64 / scale,
-            py as f64 / scale,
-            bar_w,
-            bar_h,
-            default_x,
-            default_y,
-        );
-        OVERLAY_SKIP_MOVE_SAVE.store(true, Ordering::SeqCst);
-        let _ = win.set_size(tauri::LogicalSize::new(bar_w, bar_h));
-        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-        capture_overlay_home(app);
-        std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-            OVERLAY_SKIP_MOVE_SAVE.store(false, Ordering::SeqCst);
-        });
-    } else {
-        apply_overlay_layout(app);
     }
-
-    let _ = win.set_always_on_top(true);
-    let _ = win.show();
+    let home = OVERLAY_HOME_PHYSICAL.lock().ok().and_then(|g| *g);
+    let result = match home {
+        Some((x, y)) => place_overlay(app, Some((x as f64, y as f64))),
+        None => apply_overlay_layout(app),
+    };
+    if let Err(error) = result {
+        eprintln!("Could not show overlay: {error}");
+        return;
+    }
+    if let Some(win) = app.get_webview_window("overlay") {
+        let _ = win.set_always_on_top(true);
+        let _ = win.unminimize();
+        let _ = win.show();
+    }
 }
 
-fn capture_overlay_home_forced(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("overlay") else {
-        return;
-    };
-    let Ok(pos) = win.outer_position() else {
-        return;
-    };
-    if let Ok(mut home) = OVERLAY_HOME_PHYSICAL.lock() {
-        *home = Some((pos.x, pos.y));
-    }
-    let scale = win.scale_factor().unwrap_or(1.0);
-    if scale > 0.0 {
-        persist_overlay_logical(pos.x as f64 / scale, pos.y as f64 / scale);
-    }
+#[cfg(windows)]
+fn left_mouse_button_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000 != 0 }
+}
+
+#[cfg(not(windows))]
+fn left_mouse_button_held() -> bool {
+    false
 }
 
 fn start_overlay_mouse_dodge(app: AppHandle) {
     std::thread::spawn(move || {
         let mut ducked = false;
+        let mut last_screen_check = std::time::Instant::now();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(70));
             flush_overlay_position_save(&app);
             if !overlay_user_wants_visible() {
                 ducked = false;
+                continue;
+            }
+            if last_screen_check.elapsed() >= std::time::Duration::from_millis(500) {
+                keep_overlay_on_screen(&app);
+                last_screen_check = std::time::Instant::now();
+            }
+            if left_mouse_button_held() {
                 continue;
             }
             if !overlay_hide_near_mouse_enabled() {
@@ -741,8 +675,7 @@ fn start_overlay_mouse_dodge(app: AppHandle) {
             }
             let near = cursor_near_overlay(&app);
             if near && !ducked {
-                // Capture the live window position even if a layout skip window is open.
-                capture_overlay_home_forced(&app);
+                persist_overlay_position_from_window(&app);
                 if let Some(win) = app.get_webview_window("overlay") {
                     let _ = win.hide();
                 }
@@ -803,8 +736,10 @@ pub fn run() {
             let overlay_i =
                 MenuItem::with_id(app, "overlay", "Toggle top status bar", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu =
-                Menu::with_items(app, &[&show_i, &settings_i, &refresh_i, &overlay_i, &quit_i])?;
+            let menu = Menu::with_items(
+                app,
+                &[&show_i, &settings_i, &refresh_i, &overlay_i, &quit_i],
+            )?;
 
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())

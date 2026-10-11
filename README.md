@@ -12,7 +12,7 @@ Built with [Tauri 2](https://tauri.app/) + React.
 ## Features
 
 - System tray icon with flyout panel
-- Optional floating overlay (enabled providers only)
+- Optional floating overlay (enabled providers only), kept within a display's usable area even after dragging or display changes
 - Auto-detect Cursor login (`%APPDATA%\Cursor\...\state.vscdb`)
 - Auto-detect Codex login (`%USERPROFILE%\.codex\auth.json`)
 - Auto-detect Devin desktop login (`%APPDATA%\Devin\...\state.vscdb`) or CLI `credentials.toml`

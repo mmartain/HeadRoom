@@ -2,6 +2,12 @@
 
 All notable changes to HeadRoom are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Keep the overlay on screen across monitors with different display scaling. Saved positions now use physical desktop coordinates, with recovery after dragging, display disconnection, resolution changes, and resizing. The bar fits inside the selected monitor's work area, clear of the taskbar.
+
 ## [0.4.0] - 2026-08-16
 
 ### Added

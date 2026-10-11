@@ -42,3 +42,8 @@ jobs:
         run: npx tauri build --no-bundle
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+
+      - name: Rust regression tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --release --locked
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target

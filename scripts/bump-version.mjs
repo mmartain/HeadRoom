@@ -68,6 +68,18 @@ export function setVersion(version) {
   }
   writeFileSync(cargoPath, nextCargo);
 
+  // Keep the root package in Cargo.lock aligned with the release manifests.
+  const cargoLockPath = join(root, "src-tauri", "Cargo.lock");
+  const cargoLock = readFileSync(cargoLockPath, "utf8");
+  const rootPackage = /(\[\[package\]\]\r?\nname = "headroom"\r?\nversion = ")[^"]+("\r?\n)/;
+  if (!rootPackage.test(cargoLock)) {
+    throw new Error("Could not find headroom package in src-tauri/Cargo.lock");
+  }
+  writeFileSync(
+    cargoLockPath,
+    cargoLock.replace(rootPackage, (_, prefix, suffix) => `${prefix}${normalized}${suffix}`),
+  );
+
   return normalized;
 }
 
