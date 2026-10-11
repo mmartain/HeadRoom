@@ -8,7 +8,35 @@ All notable changes to HeadRoom are documented in this file.
 
 - Keep the overlay on screen across monitors with different display scaling. Saved positions now use physical desktop coordinates, with recovery after dragging, display disconnection, resolution changes, and resizing. The bar fits inside the selected monitor's work area, clear of the taskbar.
 
-## [0.4.0] - 2026-08-16
+## [0.4.4] - 2026-09-22
+
+### Changed
+
+- Show the remaining Codex credit count beside rate-limit meters in the top bar when purchased credits are available.
+- Keep the Credits row in the details flyout and show each rate-limit window's reset countdown.
+- Prefer absolute Codex reset timestamps, with relative reset seconds as a fallback.
+
+## [0.4.3] - 2026-08-25
+
+### Added
+
+- Hold Shift to keep the top bar visible and draggable while "Hide when mouse is near" is enabled.
+- Settings help text explains the Shift override.
+
+## [0.4.2] - 2026-08-17
+
+### Added
+
+- Show the app version and build date in the Settings header.
+
+## [0.4.1] - 2026-08-17
+
+### Fixed
+
+- Show Codex credits whenever a balance is present, even if the API omits the `has_credits` flag. Compute a usage bar when a total or limit is available.
+- Keep credit and budget windows visible when a provider reports three or more rate-limit windows.
+
+## [0.4.0] - 2026-08-17
 
 ### Added
 
@@ -71,3 +99,16 @@ All notable changes to HeadRoom are documented in this file.
 - Optional always-on-top floating overlay (enabled providers only).
 - Threshold toasts at 80% / 95% used.
 - Modular provider plugin design; single-instance portable EXE.
+
+[0.4.5]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.5
+[0.4.4]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.4
+[0.4.3]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.3
+[0.4.2]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.2
+[0.4.1]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.1
+[0.4.0]: https://github.com/mmartain/HeadRoom/releases/tag/v0.4.0
+[0.3.0]: https://github.com/mmartain/HeadRoom/releases/tag/v0.3.0
+[0.2.2]: https://github.com/mmartain/HeadRoom/releases/tag/v0.2.2
+[0.2.1]: https://github.com/mmartain/HeadRoom/releases/tag/v0.2.1
+[0.2.0]: https://github.com/mmartain/HeadRoom/releases/tag/v0.2.0
+[0.1.1]: https://github.com/mmartain/HeadRoom/releases/tag/v0.1.1
+[0.1.0]: https://github.com/mmartain/HeadRoom/releases/tag/v0.1.0
