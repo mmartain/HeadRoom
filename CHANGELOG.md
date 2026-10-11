@@ -2,7 +2,7 @@
 
 All notable changes to HeadRoom are documented in this file.
 
-## [Unreleased]
+## [0.4.5] - 2026-10-11
 
 ### Fixed
 
