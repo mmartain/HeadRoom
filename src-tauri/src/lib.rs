@@ -1,4 +1,5 @@
 mod credential_store;
+mod cursor_safe_storage;
 mod fs_util;
 mod overlay_geometry;
 mod providers;

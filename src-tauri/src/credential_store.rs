@@ -55,7 +55,7 @@ fn write_json(path: &PathBuf, value: &Value) -> Result<(), String> {
 // DPAPI helpers (Windows-only)
 // ---------------------------------------------------------------------------
 #[cfg(windows)]
-mod dpapi {
+pub mod dpapi {
     use windows::Win32::Security::Cryptography::{
         CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
     };
@@ -89,6 +89,7 @@ mod dpapi {
         Ok(out)
     }
 
+    /// Public wrapper so other modules (e.g. Cursor safeStorage) can reuse DPAPI.
     pub fn decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
         let data_in = CRYPT_INTEGER_BLOB {
             cbData: ciphertext.len() as u32,

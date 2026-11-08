@@ -2,6 +2,12 @@
 
 All notable changes to HeadRoom are documented in this file.
 
+## [0.4.7] - 2026-11-08
+
+### Fixed
+
+- Restore Cursor usage after Cursor began encrypting login tokens at rest (`cursor-safe-storage:v1:`). HeadRoom now decrypts those tokens via Windows DPAPI + Cursor's Local State key before calling the usage API.
+
 ## [0.4.6] - 2026-10-11
 
 ### Changed

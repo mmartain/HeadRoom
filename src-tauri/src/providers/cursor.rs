@@ -1,4 +1,5 @@
 use crate::credential_store;
+use crate::cursor_safe_storage;
 use crate::fs_util;
 use crate::providers::types::{UsageSnapshot, UsageWindow};
 use rusqlite::Connection;
@@ -62,7 +63,7 @@ fn read_auth_from_db(path: &PathBuf) -> Result<(Option<String>, Option<String>),
     }
     let result = (|| {
         let conn = Connection::open(&tmp).map_err(|e| e.to_string())?;
-        let access: Option<String> = conn
+        let access_raw: Option<String> = conn
             .query_row(
                 "SELECT value FROM ItemTable WHERE key = ?1",
                 ["cursorAuth/accessToken"],
@@ -70,7 +71,7 @@ fn read_auth_from_db(path: &PathBuf) -> Result<(Option<String>, Option<String>),
             )
             .ok()
             .filter(|s: &String| !s.is_empty());
-        let refresh: Option<String> = conn
+        let refresh_raw: Option<String> = conn
             .query_row(
                 "SELECT value FROM ItemTable WHERE key = ?1",
                 ["cursorAuth/refreshToken"],
@@ -78,6 +79,15 @@ fn read_auth_from_db(path: &PathBuf) -> Result<(Option<String>, Option<String>),
             )
             .ok()
             .filter(|s: &String| !s.is_empty());
+        // Cursor 3.27+ seals tokens with Electron safeStorage (`cursor-safe-storage:v1:`).
+        let access = match access_raw {
+            Some(raw) => Some(cursor_safe_storage::unwrap_token(&raw)?),
+            None => None,
+        };
+        let refresh = match refresh_raw {
+            Some(raw) => Some(cursor_safe_storage::unwrap_token(&raw)?),
+            None => None,
+        };
         Ok((access, refresh))
     })();
     let _ = fs::remove_file(&tmp);
